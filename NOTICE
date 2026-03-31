@@ -1,0 +1,17 @@
+Gemini Internal Service
+Copyright (C) 2026 contributors
+
+This repository is a derivative work based on:
+
+  HanaokaYuzu/Gemini-API
+  https://github.com/HanaokaYuzu/Gemini-API
+
+The upstream project is licensed under the GNU Affero General Public License,
+version 3.0. This repository contains upstream source code plus downstream
+modifications and remains distributed under AGPL-3.0-compatible terms.
+
+This fork adds service-layer, deployment, testing, and operational material for
+internal multi-account Gemini service use cases.
+
+Google Gemini, Google, and related names are trademarks of Google LLC. This
+project is not affiliated with, endorsed by, or sponsored by Google LLC.

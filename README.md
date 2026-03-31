@@ -22,9 +22,41 @@
         <img src="https://github.com/HanaokaYuzu/Gemini-API/actions/workflows/pypi-publish.yml/badge.svg" alt="CI"></a>
 </p>
 
-# <img src="https://raw.githubusercontent.com/HanaokaYuzu/Gemini-API/master/assets/logo.svg" width="35px" alt="Gemini Icon" /> Gemini-API
+# <img src="https://raw.githubusercontent.com/HanaokaYuzu/Gemini-API/master/assets/logo.svg" width="35px" alt="Gemini Icon" /> Gemini Internal Service
 
-A reverse-engineered asynchronous Python wrapper for the [Google Gemini](https://gemini.google.com) web app (formerly Bard).
+This repository is a production-oriented fork of [HanaokaYuzu/Gemini-API](https://github.com/HanaokaYuzu/Gemini-API), focused on turning the upstream reverse-engineered Python SDK into an internal multi-account Gemini service for LAN deployment.
+
+> [!WARNING]
+>
+> This project is built on a non-official web wrapper around the Google Gemini web application. It is inherently more fragile than an official API integration. Expect breakage when Google changes the web app, cookies, RPC payloads, headers, or abuse controls.
+
+## Project Status
+
+- Current focus: production hardening and service layering on top of the upstream SDK.
+- Target shape: authenticated internal API + web chat UI + multi-account pool + session persistence + observability + Docker deployment.
+- License: AGPL-3.0. This fork remains AGPL-compatible because it is a derivative work of the upstream repository.
+
+## Fork Notice
+
+- Upstream project: [HanaokaYuzu/Gemini-API](https://github.com/HanaokaYuzu/Gemini-API)
+- Upstream license: AGPL-3.0
+- This repository keeps the upstream codebase and incrementally adds service, operations, deployment, and reliability layers.
+- See [NOTICE](NOTICE) for attribution details and [DISCLAIMER.md](DISCLAIMER.md) for deployment and operational risk statements.
+
+## Production Roadmap
+
+- Phase 0: repository bootstrap, legal notices, deployment intent, and documentation baseline
+- Phase 1: FastAPI service skeleton, configuration, health endpoints, auth, and OpenAPI
+- Phase 2: multi-account pool, scheduler, concurrency controls, queueing, retries, and circuit breaking
+- Phase 3: durable sessions, chat API, streaming API, and session history
+- Phase 4: internal web UI with chat, account selection, history, and admin visibility
+- Phase 5: structured logging, metrics, traces, and admin operations views
+- Phase 6: unit tests, integration tests, smoke tests, and load harness
+- Phase 7: Docker packaging, deployment docs, runbooks, and hardening checklist
+
+## Upstream SDK Summary
+
+The upstream codebase is a reverse-engineered asynchronous Python wrapper for the [Google Gemini](https://gemini.google.com) web app (formerly Bard). The sections below document the current SDK capabilities that this fork builds on top of.
 
 ## Features
 
