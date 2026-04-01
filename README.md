@@ -86,6 +86,12 @@ UI 默认使用 `.env` 中的 `GEMINI_SERVICE_UI_USERNAME` 与
 访问聊天页和管理员页。
 
 测试与压测脚本见 [docs/TESTING.md](docs/TESTING.md)。
+部署、运行与硬化文档见：
+
+- [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md)
+- [docs/RUNBOOK.md](docs/RUNBOOK.md)
+- [docs/HARDENING_CHECKLIST.md](docs/HARDENING_CHECKLIST.md)
+- [docs/FAILURE_MODES.md](docs/FAILURE_MODES.md)
 
 See [config/accounts.example.json](config/accounts.example.json) for the
 intended account inventory shape that Phase 2 account health probing consumes.

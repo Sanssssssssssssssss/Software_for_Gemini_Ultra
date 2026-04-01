@@ -1,0 +1,49 @@
+services:
+  postgres:
+    image: postgres:16
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: gemini_service
+      POSTGRES_USER: gemini
+      POSTGRES_PASSWORD: gemini
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U gemini -d gemini_service"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+
+  app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+    ports:
+      - "8000:8000"
+    environment:
+      GEMINI_SERVICE_ENV: production
+      GEMINI_SERVICE_HOST: 0.0.0.0
+      GEMINI_SERVICE_PORT: 8000
+      GEMINI_SERVICE_REQUIRE_AUTH: "true"
+      GEMINI_SERVICE_DATABASE_URL: ${GEMINI_SERVICE_DATABASE_URL:-postgresql+asyncpg://gemini:gemini@postgres:5432/gemini_service}
+      GEMINI_SERVICE_ACCOUNTS_CONFIG_PATH: /app/config/accounts.json
+      GEMINI_SERVICE_UI_USERNAME: ${GEMINI_SERVICE_UI_USERNAME:-admin}
+      GEMINI_SERVICE_UI_PASSWORD: ${GEMINI_SERVICE_UI_PASSWORD:-change-me-ui-password}
+      GEMINI_SERVICE_UI_SESSION_SECRET: ${GEMINI_SERVICE_UI_SESSION_SECRET:-change-me-session-secret}
+      GEMINI_SERVICE_API_TOKENS: ${GEMINI_SERVICE_API_TOKENS:-change-me}
+      GEMINI_COOKIE_PATH: /app/data/cookies
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/healthz')"]
+      interval: 15s
+      timeout: 5s
+      retries: 10
+    volumes:
+      - ./config:/app/config:ro
+      - ./data:/app/data
+
+volumes:
+  postgres_data:

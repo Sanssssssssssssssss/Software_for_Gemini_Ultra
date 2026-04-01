@@ -1,0 +1,14 @@
+.git
+.gitignore
+.pytest_cache
+.venv
+__pycache__
+*.pyc
+*.pyo
+*.pyd
+.env
+config/accounts.json
+data
+tests
+assets
+.vscode
