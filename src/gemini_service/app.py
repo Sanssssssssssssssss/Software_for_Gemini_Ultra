@@ -1,0 +1,73 @@
+from __future__ import annotations
+
+import logging
+from contextlib import asynccontextmanager
+
+from fastapi import FastAPI
+from fastapi.responses import JSONResponse
+
+from .api.routes.health import router as health_router
+from .api.routes.service import router as service_router
+from .core.config import get_settings
+from .core.errors import ServiceError
+from .core.logging import configure_logging
+from .schemas.common import ApiError, ErrorResponse
+
+
+@asynccontextmanager
+async def lifespan(_: FastAPI):
+    settings = get_settings()
+    configure_logging(settings)
+    logging.getLogger("gemini_service").info(
+        "service_startup",
+        extra={
+            "event": "service_startup",
+            "env": settings.env,
+            "accounts_config_path": settings.accounts_config_path,
+            "require_auth": settings.require_auth,
+        },
+    )
+    yield
+
+
+def create_app() -> FastAPI:
+    settings = get_settings()
+    app = FastAPI(
+        title="Gemini Internal Service",
+        version="0.1.0",
+        summary="Internal multi-account Gemini service built on a non-official web wrapper.",
+        description=(
+            "Production-oriented service shell around the upstream Gemini web wrapper. "
+            "Endpoints that are not implemented yet return explicit 501 responses."
+        ),
+        docs_url="/docs" if settings.openapi_enabled else None,
+        redoc_url="/redoc" if settings.openapi_enabled else None,
+        openapi_url="/openapi.json" if settings.openapi_enabled else None,
+        lifespan=lifespan,
+    )
+
+    @app.exception_handler(ServiceError)
+    async def handle_service_error(_, exc: ServiceError) -> JSONResponse:
+        return JSONResponse(
+            status_code=exc.status_code,
+            content=ErrorResponse(
+                error=ApiError(
+                    code=exc.code,
+                    message=exc.message,
+                    details=exc.details,
+                )
+            ).model_dump(mode="json"),
+        )
+
+    app.include_router(health_router)
+    app.include_router(service_router)
+
+    @app.get("/", tags=["meta"])
+    async def root() -> dict[str, str]:
+        return {
+            "service": settings.service_name,
+            "status": "bootstrapping",
+            "docs": "/docs" if settings.openapi_enabled else "disabled",
+        }
+
+    return app

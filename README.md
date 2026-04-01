@@ -54,6 +54,30 @@ This repository is a production-oriented fork of [HanaokaYuzu/Gemini-API](https:
 - Phase 6: unit tests, integration tests, smoke tests, and load harness
 - Phase 7: Docker packaging, deployment docs, runbooks, and hardening checklist
 
+## Service Bootstrap Quickstart
+
+The repository now contains an internal service shell in `src/gemini_service`.
+At the current phase, health endpoints, auth, OpenAPI, and explicit placeholder
+contracts are available. The account pool and durable sessions are still under
+implementation, so `GET /readyz` will remain not ready until account inventory
+support lands.
+
+```sh
+py -m pip install -e .[dev]
+copy .env.example .env
+py -m uvicorn gemini_service.main:app --host 0.0.0.0 --port 8000
+```
+
+Useful endpoints during bootstrap:
+
+- `GET /healthz`
+- `GET /readyz`
+- `GET /docs`
+- `GET /v1/accounts` with `Authorization: Bearer <token>`
+
+See [config/accounts.example.json](config/accounts.example.json) for the
+intended account inventory shape that later phases will consume.
+
 ## Upstream SDK Summary
 
 The upstream codebase is a reverse-engineered asynchronous Python wrapper for the [Google Gemini](https://gemini.google.com) web app (formerly Bard). The sections below document the current SDK capabilities that this fork builds on top of.
