@@ -35,8 +35,12 @@ class ReadinessResponse(BaseModel):
 class AccountSummary(BaseModel):
     account_id: str
     state: str
+    account_status: str | None = None
+    status_description: str | None = None
+    models: list[str] = Field(default_factory=list)
     active_requests: int = 0
     queue_depth: int = 0
+    configured_max_concurrency: int = 1
     cooldown_until: str | None = None
     last_error: str | None = None
 

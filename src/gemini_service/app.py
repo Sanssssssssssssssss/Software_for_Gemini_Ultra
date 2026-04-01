@@ -12,12 +12,16 @@ from .core.config import get_settings
 from .core.errors import ServiceError
 from .core.logging import configure_logging
 from .schemas.common import ApiError, ErrorResponse
+from .services.account_pool import AccountPool
 
 
 @asynccontextmanager
-async def lifespan(_: FastAPI):
+async def lifespan(app: FastAPI):
     settings = get_settings()
     configure_logging(settings)
+    pool = AccountPool(settings)
+    await pool.start()
+    app.state.account_pool = pool
     logging.getLogger("gemini_service").info(
         "service_startup",
         extra={
@@ -25,9 +29,13 @@ async def lifespan(_: FastAPI):
             "env": settings.env,
             "accounts_config_path": settings.accounts_config_path,
             "require_auth": settings.require_auth,
+            "inventory_count": pool.inventory_count,
         },
     )
-    yield
+    try:
+        yield
+    finally:
+        await pool.close()
 
 
 def create_app() -> FastAPI:

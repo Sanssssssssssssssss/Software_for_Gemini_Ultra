@@ -1,16 +1,28 @@
 from __future__ import annotations
 
-from fastapi import Depends
+from fastapi import Depends, Request
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 
 from ..core.config import Settings, get_settings
 from ..core.errors import ServiceError
+from ..services.account_pool import AccountPool
 
 bearer_scheme = HTTPBearer(auto_error=False)
 
 
 def get_current_settings() -> Settings:
     return get_settings()
+
+
+def get_account_pool(request: Request) -> AccountPool:
+    pool = getattr(request.app.state, "account_pool", None)
+    if pool is None:
+        raise ServiceError(
+            status_code=503,
+            code="account_pool_unavailable",
+            message="Account pool has not been initialized yet.",
+        )
+    return pool
 
 
 def require_api_token(

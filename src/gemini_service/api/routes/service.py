@@ -12,7 +12,8 @@ from ...schemas.common import (
     SessionHistoryResponse,
     SessionResponse,
 )
-from ..dependencies import require_api_token
+from ...services.account_pool import AccountPool
+from ..dependencies import get_account_pool, require_api_token
 
 router = APIRouter()
 
@@ -26,8 +27,11 @@ def _not_implemented(name: str) -> ServiceError:
 
 
 @router.get("/v1/accounts", response_model=AccountsResponse, tags=["accounts"])
-async def list_accounts(_: str | None = Depends(require_api_token)) -> AccountsResponse:
-    return AccountsResponse(items=[])
+async def list_accounts(
+    _: str | None = Depends(require_api_token),
+    pool: AccountPool = Depends(get_account_pool),
+) -> AccountsResponse:
+    return AccountsResponse(items=await pool.list_account_summaries())
 
 
 @router.post("/v1/sessions", response_model=SessionResponse, tags=["sessions"])

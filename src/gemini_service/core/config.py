@@ -24,6 +24,9 @@ class Settings(BaseSettings):
     openapi_enabled: bool = True
     accounts_config_path: str = "config/accounts.json"
     min_ready_accounts: int = 1
+    global_max_concurrency: int = 32
+    account_probe_interval_seconds: int = 30
+    default_account_cooldown_seconds: int = 60
 
     @property
     def api_token_values(self) -> list[str]:

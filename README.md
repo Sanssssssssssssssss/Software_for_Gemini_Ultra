@@ -65,6 +65,7 @@ support lands.
 ```sh
 py -m pip install -e .[dev]
 copy .env.example .env
+copy config\accounts.example.json config\accounts.json
 py -m uvicorn gemini_service.main:app --host 0.0.0.0 --port 8000
 ```
 
@@ -76,7 +77,7 @@ Useful endpoints during bootstrap:
 - `GET /v1/accounts` with `Authorization: Bearer <token>`
 
 See [config/accounts.example.json](config/accounts.example.json) for the
-intended account inventory shape that later phases will consume.
+intended account inventory shape that Phase 2 account health probing consumes.
 
 ## Upstream SDK Summary
 
