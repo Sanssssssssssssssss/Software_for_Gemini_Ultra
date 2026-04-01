@@ -27,6 +27,7 @@ def test_healthz_returns_ok(monkeypatch):
 
         assert response.status_code == 200
         assert response.json()["status"] == "ok"
+        assert "X-Request-ID" in response.headers
 
 
 def test_readyz_reports_missing_accounts_config(monkeypatch):
@@ -67,3 +68,19 @@ def test_accounts_returns_empty_list_with_valid_token(monkeypatch):
 
         assert response.status_code == 200
         assert response.json() == {"items": []}
+
+
+def test_metrics_endpoint_exposes_prometheus_text(monkeypatch, tmp_path):
+    accounts = tmp_path / "accounts.json"
+    accounts.write_text('{"accounts":[]}', encoding="utf-8")
+
+    with _client(
+        monkeypatch,
+        GEMINI_SERVICE_REQUIRE_AUTH="false",
+        GEMINI_SERVICE_ACCOUNTS_CONFIG_PATH=str(accounts),
+    ) as client:
+        client.get("/healthz")
+        response = client.get("/metrics")
+
+        assert response.status_code == 200
+        assert "gemini_service_http_requests_total" in response.text

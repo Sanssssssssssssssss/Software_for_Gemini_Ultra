@@ -3,11 +3,13 @@ from __future__ import annotations
 from pathlib import Path
 
 from fastapi import APIRouter, Request, status
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, Response
 
-from ...api.dependencies import get_account_pool
+from ...api.dependencies import get_account_pool, get_chat_service, get_telemetry
 from ...core.config import get_settings
 from ...schemas.common import HealthResponse, ReadinessCheck, ReadinessResponse
+from ...services.chat_service import ChatService
+from ...core.telemetry import TelemetryService
 
 router = APIRouter(tags=["health"])
 
@@ -66,4 +68,25 @@ async def readyz(request: Request) -> JSONResponse:
     return JSONResponse(
         status_code=status.HTTP_200_OK if is_ready else status.HTTP_503_SERVICE_UNAVAILABLE,
         content=payload.model_dump(mode="json"),
+    )
+
+
+@router.get("/metrics", include_in_schema=False)
+async def metrics(
+    request: Request,
+) -> Response:
+    telemetry: TelemetryService = get_telemetry(request)
+    pool = get_account_pool(request)
+    chat_service: ChatService = get_chat_service(request)
+    sessions = await chat_service.repository.count_sessions()
+    messages = await chat_service.repository.count_messages()
+    telemetry.update_runtime(
+        ready_accounts=pool.ready_account_count,
+        total_accounts=pool.inventory_count,
+        sessions=sessions,
+        messages=messages,
+    )
+    return Response(
+        content=telemetry.render_prometheus(),
+        media_type="text/plain; version=0.0.4; charset=utf-8",
     )

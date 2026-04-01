@@ -32,6 +32,7 @@ class Settings(BaseSettings):
     ui_password: str = "change-me-ui-password"
     ui_session_secret: str = "change-me-session-secret"
     ui_session_cookie: str = "gemini_service_ui"
+    metrics_enabled: bool = True
 
     @property
     def api_token_values(self) -> list[str]:

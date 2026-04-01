@@ -15,6 +15,8 @@ from .api.routes.ui import router as ui_router
 from .core.config import get_settings
 from .core.errors import ServiceError
 from .core.logging import configure_logging
+from .core.middleware import RequestContextMiddleware
+from .core.telemetry import TelemetryService
 from .db.repository import ChatRepository
 from .schemas.common import ApiError, ErrorResponse
 from .services.account_pool import AccountPool
@@ -52,6 +54,7 @@ async def lifespan(app: FastAPI):
 def create_app() -> FastAPI:
     settings = get_settings()
     templates = Jinja2Templates(directory=str(Path(__file__).resolve().parent / "templates"))
+    telemetry = TelemetryService()
     app = FastAPI(
         title="Gemini Internal Service",
         version="0.1.0",
@@ -66,6 +69,7 @@ def create_app() -> FastAPI:
         lifespan=lifespan,
     )
     app.state.templates = templates
+    app.state.telemetry = telemetry
     app.add_middleware(
         SessionMiddleware,
         secret_key=settings.ui_session_secret,
@@ -74,6 +78,7 @@ def create_app() -> FastAPI:
         https_only=settings.env != "development",
         max_age=60 * 60 * 8,
     )
+    app.add_middleware(RequestContextMiddleware)
 
     @app.exception_handler(ServiceError)
     async def handle_service_error(request: Request, exc: ServiceError):

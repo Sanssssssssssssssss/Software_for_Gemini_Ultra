@@ -7,10 +7,11 @@ from fastapi.responses import HTMLResponse, RedirectResponse, StreamingResponse
 
 from ...core.config import get_settings
 from ...core.errors import ServiceError
+from ...core.telemetry import TelemetryService
 from ...schemas.common import MessageRequest, SessionCreateRequest
 from ...services.account_pool import AccountPool
 from ...services.chat_service import ChatService
-from ..dependencies import get_account_pool, get_chat_service, require_ui_user
+from ..dependencies import get_account_pool, get_chat_service, get_telemetry, require_ui_user
 
 router = APIRouter(tags=["ui"])
 
@@ -84,14 +85,23 @@ async def admin_page(
     _: str = Depends(require_ui_user),
     pool: AccountPool = Depends(get_account_pool),
     chat_service: ChatService = Depends(get_chat_service),
+    telemetry: TelemetryService = Depends(get_telemetry),
 ) -> HTMLResponse:
+    sessions = await chat_service.list_sessions(limit=50)
+    telemetry.update_runtime(
+        ready_accounts=pool.ready_account_count,
+        total_accounts=pool.inventory_count,
+        sessions=len(sessions),
+        messages=await chat_service.repository.count_messages(),
+    )
     return _templates(request).TemplateResponse(
         request,
         "admin.html",
         {
             "request": request,
             "accounts": await pool.list_account_summaries(force_refresh=True),
-            "sessions": await chat_service.list_sessions(limit=50),
+            "sessions": sessions,
+            "telemetry": telemetry.snapshot(),
             "ui_user": request.session.get("ui_user"),
         },
     )

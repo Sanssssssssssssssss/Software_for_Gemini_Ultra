@@ -79,6 +79,7 @@ Useful endpoints during bootstrap:
 - `GET /ui/login`
 - `GET /ui/chat`
 - `GET /admin`
+- `GET /metrics`
 
 UI 默认使用 `.env` 中的 `GEMINI_SERVICE_UI_USERNAME` 与
 `GEMINI_SERVICE_UI_PASSWORD` 登录，登录成功后通过签名 session cookie

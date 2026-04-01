@@ -105,6 +105,16 @@ class ChatRepository:
             )
             return list(result.scalars())
 
+    async def count_sessions(self) -> int:
+        async with self._session() as db:
+            result = await db.execute(select(SessionRecord))
+            return len(list(result.scalars()))
+
+    async def count_messages(self) -> int:
+        async with self._session() as db:
+            result = await db.execute(select(MessageRecord))
+            return len(list(result.scalars()))
+
     async def get_cached_assistant_message(
         self,
         session_id: str,

@@ -5,6 +5,7 @@ from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 
 from ..core.config import Settings, get_settings
 from ..core.errors import ServiceError
+from ..core.telemetry import TelemetryService
 from ..services.account_pool import AccountPool
 from ..services.chat_service import ChatService
 
@@ -35,6 +36,17 @@ def get_chat_service(request: Request) -> ChatService:
             message="Chat service has not been initialized yet.",
         )
     return service
+
+
+def get_telemetry(request: Request) -> TelemetryService:
+    telemetry = getattr(request.app.state, "telemetry", None)
+    if telemetry is None:
+        raise ServiceError(
+            status_code=503,
+            code="telemetry_unavailable",
+            message="Telemetry service has not been initialized yet.",
+        )
+    return telemetry
 
 
 def require_ui_user(
