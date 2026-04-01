@@ -37,6 +37,27 @@ def get_chat_service(request: Request) -> ChatService:
     return service
 
 
+def require_ui_user(
+    request: Request,
+    settings: Settings = Depends(get_current_settings),
+) -> str:
+    session = getattr(request, "session", None)
+    if not session:
+        raise ServiceError(
+            status_code=401,
+            code="ui_not_authenticated",
+            message="UI login is required.",
+        )
+    username = session.get("ui_user")
+    if username != settings.ui_username:
+        raise ServiceError(
+            status_code=401,
+            code="ui_not_authenticated",
+            message="UI login is required.",
+        )
+    return username
+
+
 def require_api_token(
     credentials: HTTPAuthorizationCredentials | None = Depends(bearer_scheme),
     settings: Settings = Depends(get_current_settings),

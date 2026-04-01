@@ -28,6 +28,10 @@ class Settings(BaseSettings):
     global_max_concurrency: int = 32
     account_probe_interval_seconds: int = 30
     default_account_cooldown_seconds: int = 60
+    ui_username: str = "admin"
+    ui_password: str = "change-me-ui-password"
+    ui_session_secret: str = "change-me-session-secret"
+    ui_session_cookie: str = "gemini_service_ui"
 
     @property
     def api_token_values(self) -> list[str]:

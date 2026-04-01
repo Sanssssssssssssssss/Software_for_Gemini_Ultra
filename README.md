@@ -76,6 +76,13 @@ Useful endpoints during bootstrap:
 - `POST /v1/sessions`
 - `POST /v1/messages`
 - `GET /v1/sessions/{id}/history`
+- `GET /ui/login`
+- `GET /ui/chat`
+- `GET /admin`
+
+UI 默认使用 `.env` 中的 `GEMINI_SERVICE_UI_USERNAME` 与
+`GEMINI_SERVICE_UI_PASSWORD` 登录，登录成功后通过签名 session cookie
+访问聊天页和管理员页。
 
 See [config/accounts.example.json](config/accounts.example.json) for the
 intended account inventory shape that Phase 2 account health probing consumes.

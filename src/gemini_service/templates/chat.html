@@ -1,0 +1,270 @@
+{% extends "base.html" %}
+
+{% block title %}聊天 · Gemini Internal Service{% endblock %}
+
+{% block head %}
+  <style>
+    .layout {
+      display: grid;
+      grid-template-columns: 300px minmax(0, 1fr);
+      gap: 20px;
+      margin-top: 22px;
+    }
+    .sidebar, .chat-panel {
+      padding: 20px;
+    }
+    .session-list, .account-list, .messages {
+      display: grid;
+      gap: 10px;
+    }
+    .session-item, .account-item, .message {
+      border: 1px solid var(--line);
+      border-radius: 18px;
+      padding: 12px 14px;
+      background: rgba(255,255,255,0.72);
+    }
+    .message.user { border-left: 6px solid var(--accent-2); }
+    .message.assistant { border-left: 6px solid var(--accent); }
+    .chat-panel {
+      min-height: 70vh;
+      display: grid;
+      grid-template-rows: auto 1fr auto;
+      gap: 16px;
+    }
+    .messages {
+      overflow: auto;
+      max-height: 56vh;
+      padding-right: 6px;
+    }
+    .toolbar {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      gap: 12px;
+      flex-wrap: wrap;
+    }
+    .composer {
+      display: grid;
+      grid-template-columns: 1fr auto;
+      gap: 12px;
+      align-items: end;
+    }
+    .composer textarea {
+      min-height: 104px;
+      resize: vertical;
+    }
+    .mini-nav {
+      display: flex;
+      gap: 10px;
+      align-items: center;
+    }
+    @media (max-width: 980px) {
+      .layout { grid-template-columns: 1fr; }
+      .chat-panel { min-height: auto; }
+      .messages { max-height: none; min-height: 320px; }
+      .composer { grid-template-columns: 1fr; }
+    }
+  </style>
+{% endblock %}
+
+{% block body %}
+  <section class="hero">
+    <div>
+      <div class="badge">LAN Chat UI</div>
+      <h1>Gemini 对话控制台</h1>
+      <p>在局域网内使用共享 Gemini 账号聊天。会话会绑定到账号并持久化，除非后续阶段定义故障切换规则，否则会尽量保持 sticky routing。</p>
+    </div>
+    <div class="mini-nav">
+      <a class="button secondary" href="/admin">管理员页</a>
+      <form method="post" action="/ui/logout">
+        <button class="secondary" type="submit">退出 {{ ui_user }}</button>
+      </form>
+    </div>
+  </section>
+
+  <div class="layout">
+    <aside class="panel sidebar">
+      <h3 style="margin-top: 0;">账号池</h3>
+      <div class="account-list" id="account-list">
+        {% for account in accounts %}
+          <div class="account-item">
+            <strong>{{ account.account_id }}</strong>
+            <div class="muted">状态：{{ account.state }}</div>
+            <div class="muted">Gemini：{{ account.account_status or "unknown" }}</div>
+            <div class="muted">并发：{{ account.active_requests }}/{{ account.configured_max_concurrency }}</div>
+          </div>
+        {% endfor %}
+      </div>
+
+      <h3 style="margin-top: 24px;">最近会话</h3>
+      <div class="session-list" id="session-list">
+        {% for session in sessions %}
+          <button class="session-item secondary" type="button" onclick="loadSession('{{ session.session_id }}')">
+            <div><strong>{{ session.session_id[:8] }}</strong></div>
+            <div class="muted">{{ session.account_id }} · {{ session.status }}</div>
+          </button>
+        {% else %}
+          <div class="muted">还没有会话。</div>
+        {% endfor %}
+      </div>
+    </aside>
+
+    <section class="panel chat-panel">
+      <div class="toolbar">
+        <div>
+          <h2 style="margin: 0;">当前会话</h2>
+          <div class="muted" id="session-meta">未选择会话</div>
+        </div>
+        <div style="display: flex; gap: 10px; min-width: 320px;">
+          <select id="account-select">
+            <option value="">自动选择可用账号</option>
+            {% for account in accounts %}
+              <option value="{{ account.account_id }}">{{ account.account_id }} · {{ account.state }}</option>
+            {% endfor %}
+          </select>
+          <button class="warn" type="button" onclick="createSession()">新建会话</button>
+        </div>
+      </div>
+
+      <div class="messages" id="messages">
+        <div class="muted">新建或选择一个会话后开始聊天。</div>
+      </div>
+
+      <div class="composer">
+        <label>
+          <div style="margin-bottom: 8px;">消息</div>
+          <textarea id="message-input" placeholder="输入你的消息。默认会走流式输出。"></textarea>
+        </label>
+        <div style="display: grid; gap: 10px;">
+          <label style="display: flex; align-items: center; gap: 8px;">
+            <input id="stream-toggle" type="checkbox" checked style="width: auto;" />
+            <span>流式输出</span>
+          </label>
+          <button type="button" onclick="sendMessage()">发送</button>
+        </div>
+      </div>
+    </section>
+  </div>
+
+  <script>
+    let currentSessionId = null;
+
+    function renderMessage(role, content) {
+      const messages = document.getElementById('messages');
+      const block = document.createElement('div');
+      block.className = `message ${role}`;
+      block.innerHTML = `<div><strong>${role === 'user' ? '用户' : 'Gemini'}</strong></div><div style="white-space: pre-wrap; margin-top: 8px;">${content}</div>`;
+      messages.appendChild(block);
+      messages.scrollTop = messages.scrollHeight;
+      return block;
+    }
+
+    async function createSession() {
+      const accountId = document.getElementById('account-select').value || null;
+      const response = await fetch('/ui/api/sessions', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({account_id: accountId, routing_policy: 'sticky'})
+      });
+      const session = await response.json();
+      currentSessionId = session.session_id;
+      document.getElementById('session-meta').textContent = `${session.session_id} · ${session.account_id} · ${session.status}`;
+      document.getElementById('messages').innerHTML = '';
+      renderMessage('assistant', '会话已创建，可以开始发送消息。');
+      await refreshBootstrap();
+    }
+
+    async function loadSession(sessionId) {
+      currentSessionId = sessionId;
+      const response = await fetch(`/ui/api/sessions/${sessionId}/history`);
+      const history = await response.json();
+      document.getElementById('messages').innerHTML = '';
+      document.getElementById('session-meta').textContent = sessionId;
+      if (!history.items.length) {
+        renderMessage('assistant', '这个会话还没有消息。');
+        return;
+      }
+      history.items.forEach(item => renderMessage(item.role === 'assistant' ? 'assistant' : 'user', item.content));
+    }
+
+    async function sendMessage() {
+      if (!currentSessionId) {
+        await createSession();
+      }
+
+      const input = document.getElementById('message-input');
+      const content = input.value.trim();
+      if (!content) return;
+
+      input.value = '';
+      renderMessage('user', content);
+
+      const stream = document.getElementById('stream-toggle').checked;
+      if (!stream) {
+        const response = await fetch('/ui/api/messages', {
+          method: 'POST',
+          headers: {'Content-Type': 'application/json'},
+          body: JSON.stringify({session_id: currentSessionId, message: content, stream: false})
+        });
+        const payload = await response.json();
+        renderMessage('assistant', payload.content);
+        return;
+      }
+
+      const placeholder = renderMessage('assistant', '');
+      const textNode = placeholder.querySelector('div:last-child');
+      const response = await fetch('/ui/api/messages:stream', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({session_id: currentSessionId, message: content, stream: true})
+      });
+
+      const reader = response.body.getReader();
+      const decoder = new TextDecoder();
+      let buffer = '';
+
+      while (true) {
+        const {value, done} = await reader.read();
+        if (done) break;
+        buffer += decoder.decode(value, {stream: true});
+        const events = buffer.split('\n\n');
+        buffer = events.pop();
+        for (const rawEvent of events) {
+          const lines = rawEvent.split('\n');
+          const eventLine = lines.find(line => line.startsWith('event: '));
+          const dataLine = lines.find(line => line.startsWith('data: '));
+          if (!eventLine || !dataLine) continue;
+          const eventName = eventLine.slice(7);
+          const payload = JSON.parse(dataLine.slice(6));
+          if (eventName === 'chunk') {
+            textNode.textContent += payload.text_delta || '';
+          }
+          if (eventName === 'done' && payload.session_id) {
+            currentSessionId = payload.session_id;
+            document.getElementById('session-meta').textContent = `${payload.session_id} · ${payload.account_id}`;
+          }
+        }
+      }
+      await refreshBootstrap();
+    }
+
+    async function refreshBootstrap() {
+      const response = await fetch('/ui/api/bootstrap');
+      const payload = await response.json();
+      const sessionList = document.getElementById('session-list');
+      sessionList.innerHTML = '';
+      if (!payload.sessions.length) {
+        sessionList.innerHTML = '<div class="muted">还没有会话。</div>';
+      } else {
+        payload.sessions.forEach(session => {
+          const button = document.createElement('button');
+          button.type = 'button';
+          button.className = 'session-item secondary';
+          button.onclick = () => loadSession(session.session_id);
+          button.innerHTML = `<div><strong>${session.session_id.slice(0, 8)}</strong></div><div class="muted">${session.account_id} · ${session.status}</div>`;
+          sessionList.appendChild(button);
+        });
+      }
+    }
+  </script>
+{% endblock %}

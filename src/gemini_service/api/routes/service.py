@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from fastapi import APIRouter, Depends
-from fastapi.responses import HTMLResponse, StreamingResponse
+from fastapi.responses import StreamingResponse
 
 from ...core.errors import ServiceError
 from ...schemas.common import (
@@ -94,18 +94,3 @@ async def execute_batch(
     __: str | None = Depends(require_api_token),
 ):
     raise _not_implemented("Batch execution")
-
-
-@router.get("/admin", response_class=HTMLResponse, tags=["admin"])
-async def admin_page(_: str | None = Depends(require_api_token)) -> HTMLResponse:
-    html = """
-    <html>
-      <head><title>Gemini Internal Service Admin</title></head>
-      <body>
-        <h1>Gemini Internal Service</h1>
-        <p>Admin UI is not implemented yet.</p>
-        <p>Current phase provides service bootstrap, auth, health checks, and API contract placeholders.</p>
-      </body>
-    </html>
-    """
-    return HTMLResponse(content=html)

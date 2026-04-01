@@ -96,6 +96,15 @@ class ChatRepository:
             )
             return list(result.scalars())
 
+    async def list_sessions(self, limit: int = 50) -> list[SessionRecord]:
+        async with self._session() as db:
+            result = await db.execute(
+                select(SessionRecord)
+                .order_by(SessionRecord.updated_at.desc())
+                .limit(limit)
+            )
+            return list(result.scalars())
+
     async def get_cached_assistant_message(
         self,
         session_id: str,

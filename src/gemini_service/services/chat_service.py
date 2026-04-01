@@ -68,6 +68,10 @@ class ChatService:
             ],
         )
 
+    async def list_sessions(self, limit: int = 50) -> list[SessionResponse]:
+        records = await self.repository.list_sessions(limit=limit)
+        return [self._session_response(record) for record in records]
+
     async def send_message(self, request: MessageRequest) -> MessageResponse:
         record = await self.repository.get_session(request.session_id)
         if record is None:

@@ -2,12 +2,16 @@ from __future__ import annotations
 
 import logging
 from contextlib import asynccontextmanager
+from pathlib import Path
 
-from fastapi import FastAPI
-from fastapi.responses import JSONResponse
+from fastapi import FastAPI, Request
+from fastapi.responses import JSONResponse, RedirectResponse
+from fastapi.templating import Jinja2Templates
+from starlette.middleware.sessions import SessionMiddleware
 
 from .api.routes.health import router as health_router
 from .api.routes.service import router as service_router
+from .api.routes.ui import router as ui_router
 from .core.config import get_settings
 from .core.errors import ServiceError
 from .core.logging import configure_logging
@@ -47,6 +51,7 @@ async def lifespan(app: FastAPI):
 
 def create_app() -> FastAPI:
     settings = get_settings()
+    templates = Jinja2Templates(directory=str(Path(__file__).resolve().parent / "templates"))
     app = FastAPI(
         title="Gemini Internal Service",
         version="0.1.0",
@@ -60,9 +65,24 @@ def create_app() -> FastAPI:
         openapi_url="/openapi.json" if settings.openapi_enabled else None,
         lifespan=lifespan,
     )
+    app.state.templates = templates
+    app.add_middleware(
+        SessionMiddleware,
+        secret_key=settings.ui_session_secret,
+        session_cookie=settings.ui_session_cookie,
+        same_site="lax",
+        https_only=settings.env != "development",
+        max_age=60 * 60 * 8,
+    )
 
     @app.exception_handler(ServiceError)
-    async def handle_service_error(_, exc: ServiceError) -> JSONResponse:
+    async def handle_service_error(request: Request, exc: ServiceError):
+        if (
+            exc.code == "ui_not_authenticated"
+            and request.url.path.startswith(("/ui", "/admin"))
+            and request.url.path != "/ui/login"
+        ):
+            return RedirectResponse(url="/ui/login", status_code=303)
         return JSONResponse(
             status_code=exc.status_code,
             content=ErrorResponse(
@@ -76,13 +96,10 @@ def create_app() -> FastAPI:
 
     app.include_router(health_router)
     app.include_router(service_router)
+    app.include_router(ui_router)
 
     @app.get("/", tags=["meta"])
-    async def root() -> dict[str, str]:
-        return {
-            "service": settings.service_name,
-            "status": "bootstrapping",
-            "docs": "/docs" if settings.openapi_enabled else "disabled",
-        }
+    async def root() -> RedirectResponse:
+        return RedirectResponse(url="/ui/chat", status_code=307)
 
     return app

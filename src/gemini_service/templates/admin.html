@@ -1,0 +1,107 @@
+{% extends "base.html" %}
+
+{% block title %}管理员页 · Gemini Internal Service{% endblock %}
+
+{% block head %}
+  <style>
+    .grid {
+      display: grid;
+      grid-template-columns: 1.2fr 1fr;
+      gap: 20px;
+      margin-top: 22px;
+    }
+    .table {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 0.95rem;
+    }
+    .table th, .table td {
+      padding: 12px 10px;
+      border-bottom: 1px solid var(--line);
+      text-align: left;
+      vertical-align: top;
+    }
+    @media (max-width: 980px) {
+      .grid { grid-template-columns: 1fr; }
+    }
+  </style>
+{% endblock %}
+
+{% block body %}
+  <section class="hero">
+    <div>
+      <div class="badge">Admin Visibility</div>
+      <h1>账号池与会话总览</h1>
+      <p>这里展示当前账号运行状态和最近会话，帮助排查不可用账号、冷却状态和 sticky session 绑定情况。</p>
+    </div>
+    <div style="display: flex; gap: 10px;">
+      <a class="button secondary" href="/ui/chat">返回聊天</a>
+      <form method="post" action="/ui/logout">
+        <button class="secondary" type="submit">退出 {{ ui_user }}</button>
+      </form>
+    </div>
+  </section>
+
+  <div class="grid">
+    <section class="panel" style="padding: 20px;">
+      <h2 style="margin-top: 0;">账号池</h2>
+      <table class="table">
+        <thead>
+          <tr>
+            <th>账号</th>
+            <th>运行状态</th>
+            <th>Gemini 状态</th>
+            <th>并发</th>
+            <th>冷却</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for account in accounts %}
+            <tr>
+              <td>
+                <strong>{{ account.account_id }}</strong>
+                {% if account.last_error %}
+                  <div class="danger" style="margin-top: 6px;">{{ account.last_error }}</div>
+                {% endif %}
+              </td>
+              <td>{{ account.state }}</td>
+              <td>{{ account.account_status or "unknown" }}</td>
+              <td>{{ account.active_requests }}/{{ account.configured_max_concurrency }}</td>
+              <td>{{ account.cooldown_until or "-" }}</td>
+            </tr>
+          {% else %}
+            <tr>
+              <td colspan="5" class="muted">暂无账号配置。</td>
+            </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </section>
+
+    <section class="panel" style="padding: 20px;">
+      <h2 style="margin-top: 0;">最近会话</h2>
+      <table class="table">
+        <thead>
+          <tr>
+            <th>会话</th>
+            <th>账号</th>
+            <th>状态</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for session in sessions %}
+            <tr>
+              <td>{{ session.session_id }}</td>
+              <td>{{ session.account_id }}</td>
+              <td>{{ session.status }}</td>
+            </tr>
+          {% else %}
+            <tr>
+              <td colspan="3" class="muted">暂无会话。</td>
+            </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </section>
+  </div>
+{% endblock %}

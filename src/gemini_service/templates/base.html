@@ -1,0 +1,127 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>{% block title %}Gemini Internal Service{% endblock %}</title>
+    <style>
+      :root {
+        --bg: #f2efe7;
+        --panel: rgba(255, 255, 255, 0.86);
+        --ink: #162216;
+        --muted: #5d6d5b;
+        --line: rgba(22, 34, 22, 0.12);
+        --accent: #1f6f53;
+        --accent-2: #d88a2d;
+        --danger: #b93d2f;
+        --shadow: 0 20px 50px rgba(28, 48, 33, 0.12);
+      }
+
+      * { box-sizing: border-box; }
+      body {
+        margin: 0;
+        min-height: 100vh;
+        font-family: "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif;
+        color: var(--ink);
+        background:
+          radial-gradient(circle at top left, rgba(216, 138, 45, 0.18), transparent 28%),
+          radial-gradient(circle at top right, rgba(31, 111, 83, 0.16), transparent 32%),
+          linear-gradient(180deg, #f6f1e7 0%, #ebe5d9 100%);
+      }
+
+      a { color: inherit; text-decoration: none; }
+
+      .shell {
+        width: min(1380px, calc(100vw - 32px));
+        margin: 24px auto;
+      }
+
+      .hero {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        gap: 20px;
+        padding: 24px 28px;
+        border: 1px solid var(--line);
+        border-radius: 28px;
+        background: linear-gradient(135deg, rgba(255,255,255,0.88), rgba(244,238,227,0.9));
+        box-shadow: var(--shadow);
+        backdrop-filter: blur(16px);
+      }
+
+      .hero h1 {
+        margin: 0;
+        font-size: clamp(1.8rem, 2.8vw, 3rem);
+        letter-spacing: -0.04em;
+      }
+
+      .hero p {
+        margin: 8px 0 0;
+        color: var(--muted);
+        max-width: 800px;
+      }
+
+      .badge {
+        display: inline-flex;
+        align-items: center;
+        gap: 8px;
+        padding: 8px 12px;
+        border-radius: 999px;
+        background: rgba(31, 111, 83, 0.09);
+        color: var(--accent);
+        font-size: 0.92rem;
+      }
+
+      .panel {
+        border: 1px solid var(--line);
+        border-radius: 24px;
+        background: var(--panel);
+        box-shadow: var(--shadow);
+        backdrop-filter: blur(18px);
+      }
+
+      .button, button {
+        border: none;
+        border-radius: 14px;
+        background: linear-gradient(135deg, var(--accent), #154a37);
+        color: white;
+        padding: 12px 18px;
+        font-weight: 600;
+        cursor: pointer;
+      }
+
+      .button.secondary, button.secondary {
+        background: rgba(22, 34, 22, 0.08);
+        color: var(--ink);
+      }
+
+      .button.warn, button.warn {
+        background: linear-gradient(135deg, var(--accent-2), #b36a17);
+      }
+
+      input, select, textarea {
+        width: 100%;
+        border: 1px solid rgba(22, 34, 22, 0.14);
+        border-radius: 14px;
+        padding: 12px 14px;
+        background: rgba(255,255,255,0.9);
+        color: var(--ink);
+        font: inherit;
+      }
+
+      .muted { color: var(--muted); }
+      .danger { color: var(--danger); }
+
+      @media (max-width: 900px) {
+        .shell { width: min(100vw - 20px, 100%); margin: 10px auto 24px; }
+        .hero { padding: 18px; border-radius: 22px; }
+      }
+    </style>
+    {% block head %}{% endblock %}
+  </head>
+  <body>
+    <div class="shell">
+      {% block body %}{% endblock %}
+    </div>
+  </body>
+</html>
