@@ -22,6 +22,7 @@ class Settings(BaseSettings):
     require_auth: bool = True
     api_tokens: str = ""
     openapi_enabled: bool = True
+    database_url: str = "sqlite+aiosqlite:///./data/gemini_service.db"
     accounts_config_path: str = "config/accounts.json"
     min_ready_accounts: int = 1
     global_max_concurrency: int = 32

@@ -1,9 +1,10 @@
 from __future__ import annotations
 
 from gemini_webapi import GeminiClient
+from gemini_webapi.constants import Model
 
 from ..schemas.accounts import AccountConfig
-from .base import AccountProbeResult
+from .base import AccountProbeResult, MessageChunk, MessageResult
 
 
 class GeminiWebAccountAdapter:
@@ -31,6 +32,46 @@ class GeminiWebAccountAdapter:
             status_description=self.client.account_status.description,
             models=models,
         )
+
+    async def send_message(
+        self,
+        prompt: str,
+        chat_metadata: list[str] | None = None,
+        model: str | None = None,
+        gem: str | None = None,
+        temporary: bool = False,
+    ) -> MessageResult:
+        chat = self.client.start_chat(
+            metadata=chat_metadata if any(chat_metadata or []) else None,
+            model=model or Model.UNSPECIFIED,
+            gem=gem,
+        )
+        output = await chat.send_message(prompt=prompt, temporary=temporary)
+        return MessageResult(
+            text=output.text,
+            metadata=list(output.metadata[:3]),
+            thoughts=output.thoughts or "",
+        )
+
+    async def stream_message(
+        self,
+        prompt: str,
+        chat_metadata: list[str] | None = None,
+        model: str | None = None,
+        gem: str | None = None,
+        temporary: bool = False,
+    ):
+        chat = self.client.start_chat(
+            metadata=chat_metadata if any(chat_metadata or []) else None,
+            model=model or Model.UNSPECIFIED,
+            gem=gem,
+        )
+        async for output in chat.send_message_stream(prompt=prompt, temporary=temporary):
+            yield MessageChunk(
+                text_delta=output.text_delta,
+                text=output.text,
+                metadata=list(output.metadata[:3]),
+            )
 
     async def close(self) -> None:
         await self.client.close()

@@ -148,7 +148,21 @@ class AccountPool:
         await self.refresh_if_due(force=force_refresh)
         return [runtime.summary() for runtime in self._runtimes.values()]
 
-    async def choose_account(self, preferred_account_id: str | None = None) -> AccountRuntime:
+    async def choose_account(
+        self,
+        preferred_account_id: str | None = None,
+        require_preferred: bool = False,
+    ) -> AccountRuntime:
+        return await self._choose_account(
+            preferred_account_id=preferred_account_id,
+            require_preferred=require_preferred,
+        )
+
+    async def _choose_account(
+        self,
+        preferred_account_id: str | None,
+        require_preferred: bool,
+    ) -> AccountRuntime:
         await self.refresh_if_due()
         candidates = [
             runtime
@@ -160,6 +174,12 @@ class AccountPool:
             preferred = self._runtimes.get(preferred_account_id)
             if preferred and preferred.can_accept_requests():
                 return preferred
+            if require_preferred:
+                raise ServiceError(
+                    status_code=503,
+                    code="preferred_account_unavailable",
+                    message=f"Preferred account {preferred_account_id} is not ready to accept requests.",
+                )
 
         if not candidates:
             raise ServiceError(
@@ -177,8 +197,15 @@ class AccountPool:
         )
         return candidates[0]
 
-    async def acquire(self, preferred_account_id: str | None = None) -> AccountLease:
-        runtime = await self.choose_account(preferred_account_id=preferred_account_id)
+    async def acquire(
+        self,
+        preferred_account_id: str | None = None,
+        require_preferred: bool = False,
+    ) -> AccountLease:
+        runtime = await self._choose_account(
+            preferred_account_id=preferred_account_id,
+            require_preferred=require_preferred,
+        )
         return AccountLease(self, runtime)
 
     def _load_inventory(self) -> dict[str, AccountRuntime]:

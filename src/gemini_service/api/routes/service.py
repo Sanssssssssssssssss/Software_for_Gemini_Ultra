@@ -1,19 +1,21 @@
 from __future__ import annotations
 
 from fastapi import APIRouter, Depends
-from fastapi.responses import HTMLResponse
+from fastapi.responses import HTMLResponse, StreamingResponse
 
 from ...core.errors import ServiceError
 from ...schemas.common import (
     AccountsResponse,
     BatchRequest,
     MessageRequest,
+    MessageResponse,
     SessionCreateRequest,
     SessionHistoryResponse,
     SessionResponse,
 )
 from ...services.account_pool import AccountPool
-from ..dependencies import get_account_pool, require_api_token
+from ...services.chat_service import ChatService
+from ..dependencies import get_account_pool, get_chat_service, require_api_token
 
 router = APIRouter()
 
@@ -36,18 +38,20 @@ async def list_accounts(
 
 @router.post("/v1/sessions", response_model=SessionResponse, tags=["sessions"])
 async def create_session(
-    _: SessionCreateRequest,
-    __: str | None = Depends(require_api_token),
+    request: SessionCreateRequest,
+    _: str | None = Depends(require_api_token),
+    chat_service: ChatService = Depends(get_chat_service),
 ) -> SessionResponse:
-    raise _not_implemented("Session creation")
+    return await chat_service.create_session(request)
 
 
 @router.get("/v1/sessions/{session_id}", response_model=SessionResponse, tags=["sessions"])
 async def get_session(
     session_id: str,
     _: str | None = Depends(require_api_token),
+    chat_service: ChatService = Depends(get_chat_service),
 ) -> SessionResponse:
-    raise _not_implemented(f"Session lookup for {session_id}")
+    return await chat_service.get_session(session_id)
 
 
 @router.get(
@@ -58,24 +62,30 @@ async def get_session(
 async def get_session_history(
     session_id: str,
     _: str | None = Depends(require_api_token),
+    chat_service: ChatService = Depends(get_chat_service),
 ) -> SessionHistoryResponse:
-    raise _not_implemented(f"Session history for {session_id}")
+    return await chat_service.get_history(session_id)
 
 
-@router.post("/v1/messages", tags=["messages"])
+@router.post("/v1/messages", response_model=MessageResponse, tags=["messages"])
 async def send_message(
-    _: MessageRequest,
-    __: str | None = Depends(require_api_token),
-):
-    raise _not_implemented("Non-streaming message send")
+    request: MessageRequest,
+    _: str | None = Depends(require_api_token),
+    chat_service: ChatService = Depends(get_chat_service),
+) -> MessageResponse:
+    return await chat_service.send_message(request)
 
 
 @router.post("/v1/messages:stream", tags=["messages"])
 async def stream_message(
-    _: MessageRequest,
-    __: str | None = Depends(require_api_token),
+    request: MessageRequest,
+    _: str | None = Depends(require_api_token),
+    chat_service: ChatService = Depends(get_chat_service),
 ):
-    raise _not_implemented("Streaming message send")
+    return StreamingResponse(
+        chat_service.stream_message(request),
+        media_type="text/event-stream",
+    )
 
 
 @router.post("/v1/batches", tags=["batches"])

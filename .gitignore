@@ -202,3 +202,8 @@ Temporary Items
 
 # Temporary files
 .temp/
+
+# Local runtime data
+.env
+data/
+config/accounts.json

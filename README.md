@@ -57,10 +57,8 @@ This repository is a production-oriented fork of [HanaokaYuzu/Gemini-API](https:
 ## Service Bootstrap Quickstart
 
 The repository now contains an internal service shell in `src/gemini_service`.
-At the current phase, health endpoints, auth, OpenAPI, and explicit placeholder
-contracts are available. The account pool and durable sessions are still under
-implementation, so `GET /readyz` will remain not ready until account inventory
-support lands.
+The current branch includes health endpoints, auth, OpenAPI, account inventory
+probing, and durable session persistence backed by SQLite by default.
 
 ```sh
 py -m pip install -e .[dev]
@@ -75,6 +73,9 @@ Useful endpoints during bootstrap:
 - `GET /readyz`
 - `GET /docs`
 - `GET /v1/accounts` with `Authorization: Bearer <token>`
+- `POST /v1/sessions`
+- `POST /v1/messages`
+- `GET /v1/sessions/{id}/history`
 
 See [config/accounts.example.json](config/accounts.example.json) for the
 intended account inventory shape that Phase 2 account health probing consumes.

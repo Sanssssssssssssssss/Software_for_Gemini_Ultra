@@ -11,8 +11,10 @@ from .api.routes.service import router as service_router
 from .core.config import get_settings
 from .core.errors import ServiceError
 from .core.logging import configure_logging
+from .db.repository import ChatRepository
 from .schemas.common import ApiError, ErrorResponse
 from .services.account_pool import AccountPool
+from .services.chat_service import ChatService
 
 
 @asynccontextmanager
@@ -20,14 +22,18 @@ async def lifespan(app: FastAPI):
     settings = get_settings()
     configure_logging(settings)
     pool = AccountPool(settings)
+    repository = ChatRepository(settings.database_url)
+    await repository.start()
     await pool.start()
     app.state.account_pool = pool
+    app.state.chat_service = ChatService(pool=pool, repository=repository)
     logging.getLogger("gemini_service").info(
         "service_startup",
         extra={
             "event": "service_startup",
             "env": settings.env,
             "accounts_config_path": settings.accounts_config_path,
+            "database_url": settings.database_url,
             "require_auth": settings.require_auth,
             "inventory_count": pool.inventory_count,
         },
@@ -35,6 +41,7 @@ async def lifespan(app: FastAPI):
     try:
         yield
     finally:
+        await repository.close()
         await pool.close()
 
 

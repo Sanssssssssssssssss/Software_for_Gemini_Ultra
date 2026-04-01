@@ -52,6 +52,8 @@ class AccountsResponse(BaseModel):
 class SessionCreateRequest(BaseModel):
     account_id: str | None = None
     routing_policy: str = "sticky"
+    model: str | None = None
+    gem: str | None = None
     metadata: dict[str, Any] = Field(default_factory=dict)
 
 
@@ -60,14 +62,31 @@ class SessionResponse(BaseModel):
     account_id: str
     routing_policy: str
     status: str
+    model: str | None = None
+    gem: str | None = None
+    gemini_metadata: list[str] = Field(default_factory=list)
+    created_at: str | None = None
+    updated_at: str | None = None
 
 
 class MessageRequest(BaseModel):
     session_id: str
     message: str
     stream: bool = False
+    temporary: bool = False
     idempotency_key: str | None = None
     metadata: dict[str, Any] = Field(default_factory=dict)
+
+
+class MessageResponse(BaseModel):
+    session_id: str
+    account_id: str
+    content: str
+    cached: bool = False
+    message_id: str
+    user_message_id: str | None = None
+    gemini_metadata: list[str] = Field(default_factory=list)
+    created_at: str | None = None
 
 
 class BatchItem(BaseModel):
@@ -85,6 +104,7 @@ class SessionHistoryItem(BaseModel):
     role: Literal["user", "assistant", "system"]
     content: str
     created_at: str | None = None
+    idempotency_key: str | None = None
 
 
 class SessionHistoryResponse(BaseModel):

@@ -6,6 +6,7 @@ from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from ..core.config import Settings, get_settings
 from ..core.errors import ServiceError
 from ..services.account_pool import AccountPool
+from ..services.chat_service import ChatService
 
 bearer_scheme = HTTPBearer(auto_error=False)
 
@@ -23,6 +24,17 @@ def get_account_pool(request: Request) -> AccountPool:
             message="Account pool has not been initialized yet.",
         )
     return pool
+
+
+def get_chat_service(request: Request) -> ChatService:
+    service = getattr(request.app.state, "chat_service", None)
+    if service is None:
+        raise ServiceError(
+            status_code=503,
+            code="chat_service_unavailable",
+            message="Chat service has not been initialized yet.",
+        )
+    return service
 
 
 def require_api_token(
