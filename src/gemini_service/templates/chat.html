@@ -80,35 +80,49 @@
       <div class="badge">LAN Chat UI</div>
       <h1>Gemini Conversation Console</h1>
       <p>
-        Reuse shared Gemini web accounts inside the LAN. Sessions stay bound to a single
-        account and remain persisted, so operators can inspect routing and health when an
-        account becomes unavailable.
+        Sessions stay isolated by user and remain sticky to a single account. Standard users are
+        automatically routed to a healthy account, while administrators can use pinned routing for
+        diagnostics and recovery work.
       </p>
     </div>
     <div class="mini-nav">
+      <span class="badge">{{ ui_user }} | {{ ui_role }}</span>
       <a class="button secondary" href="/setup">Setup Checks</a>
-      <a class="button secondary" href="/admin">Admin</a>
+      {% if ui_is_admin %}
+        <a class="button secondary" href="/admin">Admin</a>
+      {% endif %}
       <form method="post" action="/ui/logout">
-        <button class="secondary" type="submit">Logout {{ ui_user }}</button>
+        <button class="secondary" type="submit">Logout</button>
       </form>
     </div>
   </section>
 
   <div class="layout">
     <aside class="panel sidebar">
-      <h3 style="margin-top: 0;">Accounts</h3>
-      <div class="account-list" id="account-list">
-        {% for account in accounts %}
-          <div class="account-item">
-            <strong>{{ account.account_id }}</strong>
-            <div class="muted">State: {{ account.state }}</div>
-            <div class="muted">Gemini: {{ account.account_status or "unknown" }}</div>
-            <div class="muted">In-flight: {{ account.active_requests }}/{{ account.configured_max_concurrency }}</div>
+      {% if ui_is_admin %}
+        <h3 style="margin-top: 0;">Accounts</h3>
+        <div class="account-list" id="account-list">
+          {% for account in accounts %}
+            <div class="account-item">
+              <strong>{{ account.account_id }}</strong>
+              <div class="muted">State: {{ account.state }}</div>
+              <div class="muted">Gemini: {{ account.account_status or "unknown" }}</div>
+              <div class="muted">In-flight: {{ account.active_requests }}/{{ account.configured_max_concurrency }}</div>
+            </div>
+          {% else %}
+            <div class="muted">No accounts are configured yet. Visit <a href="/setup">/setup</a> first.</div>
+          {% endfor %}
+        </div>
+      {% else %}
+        <h3 style="margin-top: 0;">Routing</h3>
+        <div class="account-item">
+          <strong>Automatic account routing</strong>
+          <div class="muted" style="margin-top: 8px;">
+            Your new sessions will be placed on a healthy account automatically. If something
+            fails, ask an administrator to inspect the account pool from the admin page.
           </div>
-        {% else %}
-          <div class="muted">No accounts are configured yet. Visit <a href="/setup">/setup</a> first.</div>
-        {% endfor %}
-      </div>
+        </div>
+      {% endif %}
 
       <h3 style="margin-top: 24px;">Recent Sessions</h3>
       <div class="session-list" id="session-list">
@@ -130,12 +144,14 @@
           <div class="muted" id="session-meta">No session selected</div>
         </div>
         <div style="display: flex; gap: 10px; min-width: 320px;">
-          <select id="account-select">
-            <option value="">Automatically route to a healthy account</option>
-            {% for account in accounts %}
-              <option value="{{ account.account_id }}">{{ account.account_id }} | {{ account.state }}</option>
-            {% endfor %}
-          </select>
+          {% if ui_is_admin %}
+            <select id="account-select">
+              <option value="">Automatically route to a healthy account</option>
+              {% for account in accounts %}
+                <option value="{{ account.account_id }}">{{ account.account_id }} | {{ account.state }}</option>
+              {% endfor %}
+            </select>
+          {% endif %}
           <button class="warn" type="button" onclick="createSession()">New Session</button>
         </div>
       </div>
@@ -164,6 +180,7 @@
 
   <script>
     let currentSessionId = null;
+    const isAdmin = {{ "true" if ui_is_admin else "false" }};
 
     function setStatus(message = '', isError = false) {
       const card = document.getElementById('chat-status');
@@ -200,11 +217,15 @@
     async function createSession() {
       try {
         setStatus('');
-        const accountId = document.getElementById('account-select').value || null;
+        const payload = {routing_policy: 'sticky'};
+        if (isAdmin) {
+          const select = document.getElementById('account-select');
+          payload.account_id = select ? (select.value || null) : null;
+        }
         const response = await fetch('/ui/api/sessions', {
           method: 'POST',
           headers: {'Content-Type': 'application/json'},
-          body: JSON.stringify({account_id: accountId, routing_policy: 'sticky'})
+          body: JSON.stringify(payload)
         });
         const session = await readJsonResponse(response);
         currentSessionId = session.session_id;

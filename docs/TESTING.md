@@ -19,6 +19,8 @@ Current coverage includes:
 - durable chat session persistence
 - idempotent message replay behavior
 - sticky session behavior and opt-in failover
+- batch execution and batch ownership enforcement
+- admin/user UI permission boundaries
 - provider timeout and error mapping
 - metrics endpoint exposure
 - isolated test execution independent of local `.env` or `config/accounts.json`

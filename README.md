@@ -47,6 +47,8 @@ The internal service lives in `src/gemini_service`. The current implementation a
 - isolated service tests that do not depend on local `.env` or `config/accounts.json`
 - explicit account runtime states, bounded queueing, and backpressure
 - sticky sessions with opt-in failover and persisted failover events
+- persisted batch execution with background recovery on restart
+- user-owned sessions and batches with admin/user permission boundaries
 
 Recommended first-run flow:
 
@@ -77,14 +79,16 @@ Useful endpoints:
 - `POST /v1/sessions`
 - `POST /v1/messages`
 - `POST /v1/messages:stream`
+- `POST /v1/batches`
+- `GET /v1/batches/{id}`
 - `GET /v1/sessions/{id}/history`
 - `GET /ui/login`
 - `GET /ui/chat`
 - `GET /admin`
 
-UI authentication uses `.env` values from `GEMINI_SERVICE_UI_USERNAME` and `GEMINI_SERVICE_UI_PASSWORD`. API authentication uses `GEMINI_SERVICE_API_TOKENS`.
-The current chat UI still exposes manual account selection for debugging, while automatic routing remains the preferred default behavior.
-`/v1/batches` remains intentionally unimplemented in the current phase and still returns `501`.
+UI authentication uses admin credentials from `GEMINI_SERVICE_UI_USERNAME` / `GEMINI_SERVICE_UI_PASSWORD` and can optionally enable a standard user login with `GEMINI_SERVICE_UI_USER_USERNAME` / `GEMINI_SERVICE_UI_USER_PASSWORD`.
+API authentication uses `GEMINI_SERVICE_API_TOKENS`. Plain tokens remain backward compatible and are treated as admin tokens. Structured tokens use `subject|token|role`, for example `alice|token-1|user,bob|token-2|admin`.
+The current chat UI defaults standard users to automatic routing. Manual account pinning is only exposed to administrators for debugging and recovery work.
 
 ## Documentation
 

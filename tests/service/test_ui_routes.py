@@ -27,3 +27,27 @@ def test_ui_login_and_admin_page(client_factory):
         admin = client.get("/admin")
         assert admin.status_code == 200
         assert "Account Pool and Session Overview" in admin.text
+
+
+def test_standard_ui_user_cannot_access_admin_page(client_factory):
+    with client_factory(
+        GEMINI_SERVICE_REQUIRE_AUTH="false",
+        GEMINI_SERVICE_UI_USERNAME="admin",
+        GEMINI_SERVICE_UI_PASSWORD="secret-pass",
+        GEMINI_SERVICE_UI_USER_USERNAME="analyst",
+        GEMINI_SERVICE_UI_USER_PASSWORD="user-pass",
+    ) as client:
+        login = client.post(
+            "/ui/login",
+            data={"username": "analyst", "password": "user-pass"},
+            follow_redirects=False,
+        )
+        assert login.status_code == 303
+        assert login.headers["location"] == "/ui/chat"
+
+        admin = client.get("/admin")
+        assert admin.status_code == 403
+
+        chat = client.get("/ui/chat")
+        assert chat.status_code == 200
+        assert "Automatic account routing" in chat.text
