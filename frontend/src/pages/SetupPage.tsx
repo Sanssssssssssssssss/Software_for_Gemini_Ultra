@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { Link } from "react-router-dom";
 
-import { SetupStatus, getSetupStatus } from "../lib/api";
+import { type SetupStatus, getSetupStatus } from "../lib/api";
 
 const DEFAULT_STEPS = [
   "Run `py scripts/bootstrap_local.py` to generate local config files.",
@@ -17,6 +17,7 @@ export function SetupPage() {
 
   useEffect(() => {
     let cancelled = false;
+
     void getSetupStatus()
       .then((payload) => {
         if (!cancelled) {
@@ -33,6 +34,7 @@ export function SetupPage() {
           setLoading(false);
         }
       });
+
     return () => {
       cancelled = true;
     };
@@ -76,7 +78,11 @@ export function SetupPage() {
             {status?.checks?.map((check) => (
               <article key={check.name} className={`check-card check-${check.status}`}>
                 <div className="check-header">
-                  <span className={`status-pill compact ${check.status === "pass" ? "ok" : check.status === "warn" ? "warn" : "danger"}`}>
+                  <span
+                    className={`status-pill compact ${
+                      check.status === "pass" ? "ok" : check.status === "warn" ? "warn" : "danger"
+                    }`}
+                  >
                     {check.status.toUpperCase()}
                   </span>
                   <strong>{check.name}</strong>

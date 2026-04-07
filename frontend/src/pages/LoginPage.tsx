@@ -17,9 +17,12 @@ export function LoginPage() {
 
   useEffect(() => {
     let cancelled = false;
+
     void Promise.all([getMe(), getSetupStatus()])
       .then(([me, setup]) => {
-        if (cancelled) return;
+        if (cancelled) {
+          return;
+        }
         setSetupReady(setup.setup_complete);
         if (me.authenticated) {
           navigate("/ui/chat", { replace: true });
@@ -30,14 +33,19 @@ export function LoginPage() {
           setSetupReady(false);
         }
       });
+
     return () => {
       cancelled = true;
     };
   }, [navigate]);
 
   const helperText = useMemo(() => {
-    if (setupReady === null) return "Checking service readiness…";
-    if (setupReady) return "Internal UI access is ready. Sign in with your LAN UI credentials.";
+    if (setupReady === null) {
+      return "Checking service readiness…";
+    }
+    if (setupReady) {
+      return "Internal UI access is ready. Sign in with your LAN UI credentials.";
+    }
     return "Setup checks still have failures. Review setup before handing this UI to users.";
   }, [setupReady]);
 

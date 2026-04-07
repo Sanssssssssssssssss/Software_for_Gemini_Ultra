@@ -13,8 +13,8 @@ export function App() {
       <Route path="/" element={<Navigate to="/ui/login" replace />} />
       <Route path="/ui/login" element={<LoginPage />} />
       <Route path="/setup" element={<SetupPage />} />
-      <Route path="/ui/chat" element={<ChatPage legacyHref="/ui/chat" key={location.pathname} />} />
-      <Route path="/admin" element={<AdminPage legacyHref="/admin" key={location.pathname} />} />
+      <Route path="/ui/chat" element={<ChatPage key={location.pathname} />} />
+      <Route path="/admin" element={<AdminPage key={location.pathname} />} />
       <Route path="*" element={<Navigate to="/ui/login" replace />} />
     </Routes>
   );

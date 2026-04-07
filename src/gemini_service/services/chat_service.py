@@ -147,11 +147,39 @@ class ChatService:
         record = await self._require_session(request.session_id, auth)
         cached = await self._maybe_get_cached_response(record, request.idempotency_key)
         if cached is not None:
+            yield self._sse(
+                "accepted",
+                {
+                    "session_id": record.id,
+                    "account_id": record.account_id,
+                    "cached": True,
+                },
+            )
             yield self._sse("chunk", {"text_delta": cached.content, "cached": True})
             yield self._sse("done", cached.model_dump(mode="json"))
             return
 
         selection, record = await self._prepare_session_runtime(record)
+        yield self._sse(
+            "accepted",
+            {
+                "session_id": record.id,
+                "account_id": selection.runtime.config.account_id,
+                "cached": False,
+                "failover_from": selection.failover_from,
+            },
+        )
+        if selection.failover_from is not None:
+            yield self._sse(
+                "status",
+                {
+                    "session_id": record.id,
+                    "account_id": selection.runtime.config.account_id,
+                    "phase": "failover",
+                    "message": selection.reason or "Session rerouted to a healthy account.",
+                    "failover_from": selection.failover_from,
+                },
+            )
         lease = await self.pool.acquire(
             preferred_account_id=selection.runtime.config.account_id,
             require_preferred=True,
@@ -161,7 +189,17 @@ class ChatService:
         final_metadata = self._metadata_from_record(record)
         started = time.perf_counter()
         async with lease as runtime:
+            chunk_seen = False
             try:
+                yield self._sse(
+                    "status",
+                    {
+                        "session_id": record.id,
+                        "account_id": runtime.config.account_id,
+                        "phase": "thinking",
+                        "message": "Provider accepted the request and is preparing a response.",
+                    },
+                )
                 async for chunk in runtime.adapter.stream_message(
                     prompt=request.message,
                     chat_metadata=final_metadata,
@@ -172,6 +210,17 @@ class ChatService:
                     accumulated_text = chunk.text or (accumulated_text + chunk.text_delta)
                     if chunk.metadata:
                         final_metadata = chunk.metadata
+                    if not chunk_seen:
+                        chunk_seen = True
+                        yield self._sse(
+                            "status",
+                            {
+                                "session_id": record.id,
+                                "account_id": runtime.config.account_id,
+                                "phase": "streaming",
+                                "message": "Streaming response chunks.",
+                            },
+                        )
                     yield self._sse(
                         "chunk",
                         {
@@ -191,7 +240,17 @@ class ChatService:
                     auth=auth,
                     error=exc,
                 )
-                raise
+                yield self._sse(
+                    "error",
+                    {
+                        "session_id": record.id,
+                        "account_id": runtime.config.account_id,
+                        "code": exc.code,
+                        "message": exc.message,
+                        "details": exc.details,
+                    },
+                )
+                return
             else:
                 self.pool.record_provider_success(runtime)
 

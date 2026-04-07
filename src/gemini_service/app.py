@@ -94,7 +94,7 @@ def create_app() -> FastAPI:
         secret_key=settings.ui_session_secret,
         session_cookie=settings.ui_session_cookie,
         same_site="lax",
-        https_only=settings.env != "development",
+        https_only=settings.env not in {"development", "local", "local-mock", "test"},
         max_age=60 * 60 * 8,
     )
     app.add_middleware(RequestContextMiddleware)

@@ -50,7 +50,7 @@ The internal service lives in `src/gemini_service`. The current implementation a
 - persisted batch execution with background recovery on restart
 - user-owned sessions and batches with admin/user permission boundaries
 - mock provider validation mode for offline end-to-end verification
-- React + TypeScript + Vite frontend shell for Login and Setup, served by FastAPI after build
+- React + TypeScript + Vite frontend for Login, Setup, Chat, and Admin, served by FastAPI after build
 
 Recommended first-run flow:
 
@@ -104,7 +104,8 @@ API authentication uses `GEMINI_SERVICE_API_TOKENS`. Plain tokens remain backwar
 The current chat UI defaults standard users to automatic routing. Manual account pinning is only exposed to administrators for debugging and recovery work.
 For offline validation without real Gemini cookies, use [config/accounts.mock.json](config/accounts.mock.json) together with `py scripts/validate_service.py`.
 For interactive cookie bootstrap without closing your main browser session, use `py scripts/playwright_bootstrap.py` to open a dedicated persistent Edge profile and export fresh Gemini cookies into `config/accounts.json`.
-The React frontend is built from [`frontend/`](frontend/) and currently owns the Login and Setup pages. Chat and Admin remain on the legacy server-rendered pages until the streaming rewrite lands.
+The React frontend is built from [`frontend/`](frontend/) and now owns Login, Setup, Chat, and Admin. Build it with `cd frontend && npm install && npm run build` before launching the FastAPI app so `/ui/login`, `/setup`, `/ui/chat`, and `/admin` all resolve to the new SPA.
+For local HTTP startup, non-production environments such as `development`, `local`, `local-mock`, and `test` intentionally issue a non-`Secure` UI session cookie so browser logins work without HTTPS termination.
 
 ## Documentation
 

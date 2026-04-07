@@ -63,6 +63,45 @@ def _resolve_ui_role(username: str, password: str) -> str | None:
     return None
 
 
+async def _apply_admin_account_action(
+    *,
+    account_id: str,
+    action: str,
+    pool: AccountPool,
+    telemetry: TelemetryService,
+) -> dict[str, str]:
+    if action == "clear-cooldown":
+        runtime = await pool.clear_cooldown(account_id)
+        detail = "Cooldown cleared."
+    elif action == "mark-reauth-required":
+        runtime = await pool.mark_reauth_required(account_id, "marked by operator")
+        detail = "Account marked as requiring reauthentication."
+    elif action == "disable-runtime":
+        runtime = await pool.disable_runtime(account_id, "disabled by operator")
+        detail = "Runtime disabled."
+    elif action == "enable-runtime":
+        runtime = await pool.enable_runtime(account_id)
+        detail = "Runtime enabled and refreshed."
+    elif action == "refresh":
+        runtime = await pool.refresh_account(account_id)
+        detail = "Account refreshed."
+    else:
+        telemetry.record_admin_action(action, "unknown")
+        raise ServiceError(
+            status_code=404,
+            code="admin_action_not_found",
+            message=f"Unknown account action: {action}",
+        )
+
+    telemetry.record_admin_action(action, "success")
+    return {
+        "account_id": runtime.config.account_id,
+        "action": action,
+        "state": runtime.effective_state.value,
+        "detail": detail,
+    }
+
+
 @router.get("/ui/login", response_class=HTMLResponse)
 async def login_page(request: Request) -> HTMLResponse:
     if request.session.get("ui_user"):
@@ -191,6 +230,9 @@ async def chat_page(
     pool: AccountPool = Depends(get_account_pool),
     chat_service: ChatService = Depends(get_chat_service),
 ) -> HTMLResponse:
+    frontend_page = _serve_frontend_page(request)
+    if frontend_page is not None:
+        return frontend_page
     accounts = await pool.list_account_summaries() if auth.is_admin else []
     return _templates(request).TemplateResponse(
         request,
@@ -214,6 +256,9 @@ async def admin_page(
     chat_service: ChatService = Depends(get_chat_service),
     telemetry: TelemetryService = Depends(get_telemetry),
 ) -> HTMLResponse:
+    frontend_page = _serve_frontend_page(request)
+    if frontend_page is not None:
+        return frontend_page
     sessions = await chat_service.list_sessions(auth=auth, limit=50)
     telemetry.update_runtime(
         ready_accounts=pool.ready_account_count,
@@ -245,18 +290,76 @@ async def admin_account_action(
     pool: AccountPool = Depends(get_account_pool),
     telemetry: TelemetryService = Depends(get_telemetry),
 ) -> RedirectResponse:
-    if action == "clear-cooldown":
-        await pool.clear_cooldown(account_id)
-    elif action == "mark-reauth-required":
-        await pool.mark_reauth_required(account_id, "marked by operator")
-    elif action == "disable-runtime":
-        await pool.disable_runtime(account_id, "disabled by operator")
-    elif action == "enable-runtime":
-        await pool.enable_runtime(account_id)
-    elif action == "refresh":
-        await pool.refresh_account(account_id)
-    telemetry.record_admin_action(action, "success")
+    await _apply_admin_account_action(
+        account_id=account_id,
+        action=action,
+        pool=pool,
+        telemetry=telemetry,
+    )
     return RedirectResponse(url="/admin", status_code=303)
+
+
+@router.get("/ui/api/sessions/{session_id}")
+async def ui_get_session(
+    session_id: str,
+    auth: AuthContext = Depends(require_ui_user),
+    chat_service: ChatService = Depends(get_chat_service),
+):
+    return await chat_service.get_session(session_id, auth=auth)
+
+
+@router.get("/ui/api/admin/overview")
+async def ui_admin_overview(
+    auth: AuthContext = Depends(require_ui_admin),
+    pool: AccountPool = Depends(get_account_pool),
+    chat_service: ChatService = Depends(get_chat_service),
+    telemetry: TelemetryService = Depends(get_telemetry),
+):
+    sessions = await chat_service.list_sessions(auth=auth, limit=50)
+    accounts = await pool.list_account_summaries(force_refresh=True)
+    telemetry.update_runtime(
+        ready_accounts=pool.ready_account_count,
+        total_accounts=pool.inventory_count,
+        sessions=len(sessions),
+        messages=await chat_service.repository.count_messages(),
+        batches=await chat_service.repository.count_batches(),
+    )
+    telemetry.update_account_pool(accounts)
+    return {
+        "accounts": accounts,
+        "sessions": sessions,
+        "telemetry": {
+            "total_requests": telemetry.total_requests,
+            "total_errors": telemetry.total_errors,
+            "active_requests": telemetry.active_requests,
+            "account_ready": telemetry.account_ready,
+            "account_total": telemetry.account_total,
+            "chat_sessions": telemetry.chat_sessions,
+            "chat_messages": telemetry.chat_messages,
+            "chat_batches": telemetry.chat_batches,
+            "batch_workers_active": telemetry.batch_workers_active,
+            "session_failovers_total": telemetry.session_failovers_total,
+            "account_state_counts": dict(telemetry.account_state_counts),
+            "account_queue_depth": dict(telemetry.account_queue_depth),
+            "account_in_flight": dict(telemetry.account_in_flight),
+        },
+    }
+
+
+@router.post("/ui/api/admin/accounts/{account_id}/actions/{action}")
+async def ui_admin_account_action(
+    account_id: str,
+    action: str,
+    _: AuthContext = Depends(require_ui_admin),
+    pool: AccountPool = Depends(get_account_pool),
+    telemetry: TelemetryService = Depends(get_telemetry),
+):
+    return await _apply_admin_account_action(
+        account_id=account_id,
+        action=action,
+        pool=pool,
+        telemetry=telemetry,
+    )
 
 
 @router.get("/ui/api/bootstrap")
