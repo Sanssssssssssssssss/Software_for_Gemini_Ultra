@@ -18,6 +18,8 @@ _SERVICE_ENV_KEYS = (
     "GEMINI_SERVICE_UI_USERNAME",
     "GEMINI_SERVICE_UI_PASSWORD",
     "GEMINI_SERVICE_UI_SESSION_SECRET",
+    "GEMINI_SERVICE_UI_SPA_ENABLED",
+    "GEMINI_SERVICE_FRONTEND_DIST_PATH",
 )
 
 
@@ -33,6 +35,7 @@ def isolated_service_env(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> dic
 
     monkeypatch.setenv("GEMINI_SERVICE_ACCOUNTS_CONFIG_PATH", str(accounts_path))
     monkeypatch.setenv("GEMINI_SERVICE_DATABASE_URL", database_url)
+    monkeypatch.setenv("GEMINI_SERVICE_UI_SPA_ENABLED", "false")
 
     get_settings.cache_clear()
     return {

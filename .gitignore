@@ -177,6 +177,11 @@ cython_debug/
 .DS_Store
 .AppleDouble
 .LSOverride
+frontend/node_modules/
+frontend/dist/
+frontend/*.tsbuildinfo
+frontend/vite.config.js
+frontend/vite.config.d.ts
 
 # Icon must end with two \r
 Icon

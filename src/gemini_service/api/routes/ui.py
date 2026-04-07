@@ -1,12 +1,15 @@
 from __future__ import annotations
 
+from pathlib import Path
 from urllib.parse import parse_qs
 
 from fastapi import APIRouter, Depends, Request
-from fastapi.responses import HTMLResponse, RedirectResponse, StreamingResponse
+from fastapi.responses import FileResponse, HTMLResponse, RedirectResponse, StreamingResponse
+from pydantic import BaseModel
 
 from ...core.bootstrap import evaluate_bootstrap_status
 from ...core.config import get_settings
+from ...core.errors import ServiceError
 from ...core.security import AuthContext
 from ...core.telemetry import TelemetryService
 from ...schemas.common import BootstrapStatusResponse, MessageRequest, SessionCreateRequest
@@ -29,10 +32,44 @@ def _templates(request: Request):
     return request.app.state.templates
 
 
+def _frontend_index(request: Request) -> Path | None:
+    index_path = getattr(request.app.state, "frontend_index", None)
+    return index_path if index_path and Path(index_path).exists() else None
+
+
+def _serve_frontend_page(request: Request) -> FileResponse | None:
+    index_path = _frontend_index(request)
+    if index_path is None or not get_settings().ui_spa_enabled:
+        return None
+    return FileResponse(index_path)
+
+
+class UiLoginPayload(BaseModel):
+    username: str
+    password: str
+
+
+def _resolve_ui_role(username: str, password: str) -> str | None:
+    settings = get_settings()
+    if username == settings.ui_username and password == settings.ui_password:
+        return "admin"
+    if (
+        settings.ui_user_username
+        and settings.ui_user_password
+        and username == settings.ui_user_username
+        and password == settings.ui_user_password
+    ):
+        return "user"
+    return None
+
+
 @router.get("/ui/login", response_class=HTMLResponse)
 async def login_page(request: Request) -> HTMLResponse:
     if request.session.get("ui_user"):
         return RedirectResponse(url="/ui/chat", status_code=303)
+    frontend_page = _serve_frontend_page(request)
+    if frontend_page is not None:
+        return frontend_page
     return _templates(request).TemplateResponse(
         request,
         "login.html",
@@ -45,6 +82,9 @@ async def setup_page(
     request: Request,
     pool: AccountPool = Depends(get_account_pool),
 ) -> HTMLResponse:
+    frontend_page = _serve_frontend_page(request)
+    if frontend_page is not None:
+        return frontend_page
     status = evaluate_bootstrap_status(get_settings(), pool=pool)
     return _templates(request).TemplateResponse(
         request,
@@ -71,17 +111,7 @@ async def login_submit(
     form = parse_qs(body, keep_blank_values=True)
     username = (form.get("username") or [""])[0]
     password = (form.get("password") or [""])[0]
-    settings = get_settings()
-    role: str | None = None
-    if username == settings.ui_username and password == settings.ui_password:
-        role = "admin"
-    elif (
-        settings.ui_user_username
-        and settings.ui_user_password
-        and username == settings.ui_user_username
-        and password == settings.ui_user_password
-    ):
-        role = "user"
+    role = _resolve_ui_role(username, password)
 
     if role is not None:
         request.session["ui_user"] = username
@@ -103,6 +133,55 @@ async def login_submit(
 async def logout(request: Request) -> RedirectResponse:
     request.session.clear()
     return RedirectResponse(url="/ui/login", status_code=303)
+
+
+@router.get("/ui/api/me")
+async def ui_me(request: Request):
+    user = request.session.get("ui_user")
+    role = request.session.get("ui_role")
+    return {
+        "authenticated": bool(user and role),
+        "subject": user,
+        "role": role,
+        "is_admin": role == "admin",
+    }
+
+
+@router.post("/ui/api/login")
+async def ui_login_api(
+    payload: UiLoginPayload,
+    request: Request,
+):
+    role = _resolve_ui_role(payload.username, payload.password)
+    if role is None:
+        raise ServiceError(
+            status_code=401,
+            code="ui_login_failed",
+            message="Invalid username or password.",
+        )
+
+    request.session["ui_user"] = payload.username
+    request.session["ui_role"] = role
+    return {
+        "authenticated": True,
+        "subject": payload.username,
+        "role": role,
+        "is_admin": role == "admin",
+        "redirect_to": "/ui/chat",
+    }
+
+
+@router.post("/ui/api/logout")
+async def ui_logout_api(request: Request):
+    request.session.clear()
+    return {"ok": True}
+
+
+@router.get("/ui/api/setup/status", response_model=BootstrapStatusResponse)
+async def ui_setup_status(
+    pool: AccountPool = Depends(get_account_pool),
+) -> BootstrapStatusResponse:
+    return evaluate_bootstrap_status(get_settings(), pool=pool)
 
 
 @router.get("/ui/chat", response_class=HTMLResponse)

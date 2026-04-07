@@ -40,6 +40,8 @@ class Settings(BaseSettings):
     ui_user_password: str = ""
     ui_session_secret: str = "change-me-session-secret"
     ui_session_cookie: str = "gemini_service_ui"
+    ui_spa_enabled: bool = True
+    frontend_dist_path: str = "frontend/dist"
     metrics_enabled: bool = True
 
     @property

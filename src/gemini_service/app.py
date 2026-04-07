@@ -7,6 +7,7 @@ from pathlib import Path
 from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse, RedirectResponse
 from fastapi.templating import Jinja2Templates
+from fastapi.staticfiles import StaticFiles
 from starlette.middleware.sessions import SessionMiddleware
 
 from .api.routes.health import router as health_router
@@ -64,7 +65,12 @@ async def lifespan(app: FastAPI):
 
 def create_app() -> FastAPI:
     settings = get_settings()
-    templates = Jinja2Templates(directory=str(Path(__file__).resolve().parent / "templates"))
+    app_root = Path(__file__).resolve().parent
+    repo_root = app_root.parent.parent
+    templates = Jinja2Templates(directory=str(app_root / "templates"))
+    frontend_dist = repo_root / settings.frontend_dist_path
+    frontend_index = frontend_dist / "index.html"
+    frontend_assets = frontend_dist / "assets"
     telemetry = TelemetryService()
     app = FastAPI(
         title="Gemini Internal Service",
@@ -81,6 +87,8 @@ def create_app() -> FastAPI:
     )
     app.state.templates = templates
     app.state.telemetry = telemetry
+    app.state.frontend_dist = frontend_dist
+    app.state.frontend_index = frontend_index if frontend_index.exists() else None
     app.add_middleware(
         SessionMiddleware,
         secret_key=settings.ui_session_secret,
@@ -90,6 +98,8 @@ def create_app() -> FastAPI:
         max_age=60 * 60 * 8,
     )
     app.add_middleware(RequestContextMiddleware)
+    if settings.ui_spa_enabled and frontend_assets.exists():
+        app.mount("/ui/assets", StaticFiles(directory=str(frontend_assets)), name="ui-assets")
 
     @app.exception_handler(ServiceError)
     async def handle_service_error(request: Request, exc: ServiceError):
@@ -123,7 +133,7 @@ def create_app() -> FastAPI:
         )
         if not bootstrap.setup_complete:
             return RedirectResponse(url="/setup", status_code=307)
-        if request.session.get("ui_user") == settings.ui_username:
+        if request.session.get("ui_user"):
             return RedirectResponse(url="/ui/chat", status_code=307)
         return RedirectResponse(url="/ui/login", status_code=307)
 

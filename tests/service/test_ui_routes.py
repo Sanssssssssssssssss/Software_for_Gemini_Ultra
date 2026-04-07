@@ -51,3 +51,35 @@ def test_standard_ui_user_cannot_access_admin_page(client_factory):
         chat = client.get("/ui/chat")
         assert chat.status_code == 200
         assert "Automatic account routing" in chat.text
+
+
+def test_ui_json_login_flow_and_me_endpoint(client_factory):
+    with client_factory(
+        GEMINI_SERVICE_REQUIRE_AUTH="false",
+        GEMINI_SERVICE_UI_USERNAME="admin",
+        GEMINI_SERVICE_UI_PASSWORD="secret-pass",
+    ) as client:
+        me_before = client.get("/ui/api/me")
+        assert me_before.status_code == 200
+        assert me_before.json()["authenticated"] is False
+
+        login = client.post(
+            "/ui/api/login",
+            json={"username": "admin", "password": "secret-pass"},
+        )
+        assert login.status_code == 200
+        assert login.json()["authenticated"] is True
+        assert login.json()["role"] == "admin"
+
+        me_after = client.get("/ui/api/me")
+        assert me_after.status_code == 200
+        assert me_after.json()["authenticated"] is True
+        assert me_after.json()["is_admin"] is True
+
+        logout = client.post("/ui/api/logout")
+        assert logout.status_code == 200
+        assert logout.json()["ok"] is True
+
+        me_final = client.get("/ui/api/me")
+        assert me_final.status_code == 200
+        assert me_final.json()["authenticated"] is False
