@@ -36,6 +36,8 @@ class Settings(BaseSettings):
     recent_error_limit: int = 5
     ui_username: str = "admin"
     ui_password: str = "change-me-ui-password"
+    ui_user_username: str = ""
+    ui_user_password: str = ""
     ui_session_secret: str = "change-me-session-secret"
     ui_session_cookie: str = "gemini_service_ui"
     metrics_enabled: bool = True

@@ -3,7 +3,7 @@ from __future__ import annotations
 from datetime import datetime, timezone
 from uuid import uuid4
 
-from sqlalchemy import Boolean, DateTime, ForeignKey, String, Text
+from sqlalchemy import Boolean, DateTime, ForeignKey, Integer, String, Text
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
 
 
@@ -19,6 +19,7 @@ class SessionRecord(Base):
     __tablename__ = "chat_sessions"
 
     id: Mapped[str] = mapped_column(String(64), primary_key=True, default=lambda: str(uuid4()))
+    owner_subject: Mapped[str] = mapped_column(String(255), index=True, default="system")
     account_id: Mapped[str] = mapped_column(String(128), index=True)
     routing_policy: Mapped[str] = mapped_column(String(32), default="sticky")
     status: Mapped[str] = mapped_column(String(32), default="active")
@@ -49,3 +50,42 @@ class MessageRecord(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
 
     session: Mapped[SessionRecord] = relationship(back_populates="messages")
+
+
+class BatchRecord(Base):
+    __tablename__ = "chat_batches"
+
+    id: Mapped[str] = mapped_column(String(64), primary_key=True, default=lambda: str(uuid4()))
+    owner_subject: Mapped[str] = mapped_column(String(255), index=True)
+    status: Mapped[str] = mapped_column(String(32), default="pending")
+    requested_account_id: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    total_items: Mapped[int] = mapped_column(Integer, default=0)
+    completed_items: Mapped[int] = mapped_column(Integer, default=0)
+    failed_items: Mapped[int] = mapped_column(Integer, default=0)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now, onupdate=utc_now)
+
+    items: Mapped[list["BatchItemRecord"]] = relationship(
+        back_populates="batch",
+        cascade="all, delete-orphan",
+    )
+
+
+class BatchItemRecord(Base):
+    __tablename__ = "chat_batch_items"
+
+    id: Mapped[str] = mapped_column(String(64), primary_key=True, default=lambda: str(uuid4()))
+    batch_id: Mapped[str] = mapped_column(ForeignKey("chat_batches.id"), index=True)
+    external_id: Mapped[str] = mapped_column(String(255), index=True)
+    prompt: Mapped[str] = mapped_column(Text)
+    session_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    requested_account_id: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    account_id: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    status: Mapped[str] = mapped_column(String(32), default="pending")
+    response_text: Mapped[str | None] = mapped_column(Text, nullable=True)
+    error_code: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    error_message: Mapped[str | None] = mapped_column(Text, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now, onupdate=utc_now)
+
+    batch: Mapped[BatchRecord] = relationship(back_populates="items")

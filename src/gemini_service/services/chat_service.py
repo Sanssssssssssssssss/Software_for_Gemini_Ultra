@@ -7,6 +7,7 @@ from collections.abc import AsyncIterator
 
 from ..core.errors import ServiceError
 from ..core.middleware import get_request_id
+from ..core.security import AuthContext
 from ..core.telemetry import TelemetryService
 from ..db.models import MessageRecord, SessionRecord
 from ..db.repository import ChatRepository
@@ -28,39 +29,34 @@ class ChatService:
         self.telemetry = telemetry
         self.logger = logging.getLogger("gemini_service.provider")
 
-    async def create_session(self, request: SessionCreateRequest) -> SessionResponse:
+    async def create_session(self, request: SessionCreateRequest, auth: AuthContext) -> SessionResponse:
+        if request.account_id and not auth.is_admin:
+            raise ServiceError(
+                status_code=403,
+                code="forbidden",
+                message="Only administrators can pin a session to a specific account.",
+            )
         runtime = await self.pool.choose_account(
             preferred_account_id=request.account_id,
             require_preferred=bool(request.account_id),
         )
         record = await self.repository.create_session(
+            owner_subject=auth.subject,
             account_id=runtime.config.account_id,
             routing_policy=request.routing_policy,
             model_name=request.model,
             gem_id=request.gem,
-            allow_failover=request.allow_failover,
+            allow_failover=request.allow_failover if auth.is_admin else False,
             metadata=request.metadata,
         )
         return self._session_response(record)
 
-    async def get_session(self, session_id: str) -> SessionResponse:
-        record = await self.repository.get_session(session_id)
-        if record is None:
-            raise ServiceError(
-                status_code=404,
-                code="session_not_found",
-                message=f"Session {session_id} does not exist.",
-            )
+    async def get_session(self, session_id: str, auth: AuthContext) -> SessionResponse:
+        record = await self._require_session(session_id, auth)
         return self._session_response(record)
 
-    async def get_history(self, session_id: str) -> SessionHistoryResponse:
-        record = await self.repository.get_session(session_id)
-        if record is None:
-            raise ServiceError(
-                status_code=404,
-                code="session_not_found",
-                message=f"Session {session_id} does not exist.",
-            )
+    async def get_history(self, session_id: str, auth: AuthContext) -> SessionHistoryResponse:
+        record = await self._require_session(session_id, auth)
         messages = await self.repository.list_messages(session_id)
         return SessionHistoryResponse(
             session_id=session_id,
@@ -75,12 +71,15 @@ class ChatService:
             ],
         )
 
-    async def list_sessions(self, limit: int = 50) -> list[SessionResponse]:
-        records = await self.repository.list_sessions(limit=limit)
+    async def list_sessions(self, auth: AuthContext, limit: int = 50) -> list[SessionResponse]:
+        records = await self.repository.list_sessions(
+            limit=limit,
+            owner_subject=None if auth.is_admin else auth.subject,
+        )
         return [self._session_response(record) for record in records]
 
-    async def send_message(self, request: MessageRequest) -> MessageResponse:
-        record = await self._require_session(request.session_id)
+    async def send_message(self, request: MessageRequest, auth: AuthContext) -> MessageResponse:
+        record = await self._require_session(request.session_id, auth)
         cached = await self._maybe_get_cached_response(record, request.idempotency_key)
         if cached is not None:
             return cached
@@ -109,6 +108,7 @@ class ChatService:
                     account_id=runtime.config.account_id,
                     result="error",
                     duration_ms=(time.perf_counter() - started) * 1000,
+                    auth=auth,
                     error=exc,
                 )
                 raise
@@ -121,6 +121,7 @@ class ChatService:
             account_id=record.account_id,
             result="success",
             duration_ms=(time.perf_counter() - started) * 1000,
+            auth=auth,
         )
         updated = await self.repository.update_session_metadata(record.id, result.metadata)
         user_message = await self.repository.add_message(
@@ -142,8 +143,8 @@ class ChatService:
             user_message_id=user_message.id,
         )
 
-    async def stream_message(self, request: MessageRequest) -> AsyncIterator[str]:
-        record = await self._require_session(request.session_id)
+    async def stream_message(self, request: MessageRequest, auth: AuthContext) -> AsyncIterator[str]:
+        record = await self._require_session(request.session_id, auth)
         cached = await self._maybe_get_cached_response(record, request.idempotency_key)
         if cached is not None:
             yield self._sse("chunk", {"text_delta": cached.content, "cached": True})
@@ -187,6 +188,7 @@ class ChatService:
                     account_id=runtime.config.account_id,
                     result="error",
                     duration_ms=(time.perf_counter() - started) * 1000,
+                    auth=auth,
                     error=exc,
                 )
                 raise
@@ -199,6 +201,7 @@ class ChatService:
             account_id=record.account_id,
             result="success",
             duration_ms=(time.perf_counter() - started) * 1000,
+            auth=auth,
         )
         updated = await self.repository.update_session_metadata(record.id, final_metadata)
         user_message = await self.repository.add_message(
@@ -221,13 +224,19 @@ class ChatService:
         )
         yield self._sse("done", response.model_dump(mode="json"))
 
-    async def _require_session(self, session_id: str) -> SessionRecord:
+    async def _require_session(self, session_id: str, auth: AuthContext) -> SessionRecord:
         record = await self.repository.get_session(session_id)
         if record is None:
             raise ServiceError(
                 status_code=404,
                 code="session_not_found",
                 message=f"Session {session_id} does not exist.",
+            )
+        if not auth.is_admin and record.owner_subject != auth.subject:
+            raise ServiceError(
+                status_code=403,
+                code="forbidden",
+                message="You do not have access to this session.",
             )
         return record
 
@@ -251,6 +260,7 @@ class ChatService:
                 "event": "session_failover",
                 "request_id": get_request_id(),
                 "session_id": record.id,
+                "owner_subject": record.owner_subject,
                 "from_account_id": selection.failover_from,
                 "to_account_id": selection.runtime.config.account_id,
                 "reason": selection.reason or "",
@@ -321,12 +331,14 @@ class ChatService:
         account_id: str,
         result: str,
         duration_ms: float,
+        auth: AuthContext,
         error: ServiceError | None = None,
     ) -> None:
         payload = {
             "event": "provider_call",
             "request_id": get_request_id(),
             "session_id": session_id,
+            "owner_subject": auth.subject,
             "account_id": account_id,
             "operation": operation,
             "result": result,

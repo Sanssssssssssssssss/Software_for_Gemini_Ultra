@@ -50,6 +50,20 @@ def test_accounts_returns_empty_list_with_valid_token(client_factory):
         assert response.json() == {"items": []}
 
 
+def test_accounts_accepts_structured_user_token(client_factory):
+    with client_factory(
+        GEMINI_SERVICE_REQUIRE_AUTH="true",
+        GEMINI_SERVICE_API_TOKENS="alice|phase1-token|user",
+    ) as client:
+        response = client.get(
+            "/v1/accounts",
+            headers={"Authorization": "Bearer phase1-token"},
+        )
+
+        assert response.status_code == 200
+        assert response.json() == {"items": []}
+
+
 def test_metrics_endpoint_exposes_prometheus_text(client_factory):
     with client_factory(
         GEMINI_SERVICE_REQUIRE_AUTH="false",

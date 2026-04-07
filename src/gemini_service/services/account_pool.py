@@ -38,6 +38,7 @@ class AccountRuntime:
     config: AccountConfig
     adapter: AccountAdapter
     state: AccountRuntimeState = AccountRuntimeState.INITIALIZING
+    operator_disabled: bool = False
     active_requests: int = 0
     cooldown_until: datetime | None = None
     last_error: str | None = None
@@ -62,12 +63,14 @@ class AccountRuntime:
 
     @property
     def effective_state(self) -> AccountRuntimeState:
+        if self.operator_disabled:
+            return AccountRuntimeState.DISABLED
         if self.state in {AccountRuntimeState.READY, AccountRuntimeState.DEGRADED} and self.available_slots <= 0:
             return AccountRuntimeState.BUSY
         return self.state
 
     def is_routable(self) -> bool:
-        return self.state in {AccountRuntimeState.READY, AccountRuntimeState.DEGRADED}
+        return not self.operator_disabled and self.state in {AccountRuntimeState.READY, AccountRuntimeState.DEGRADED}
 
     def is_failover_required(self) -> bool:
         return self.state in {
@@ -160,6 +163,35 @@ class AccountPool:
 
     def get_runtime(self, account_id: str) -> AccountRuntime | None:
         return self._runtimes.get(account_id)
+
+    async def clear_cooldown(self, account_id: str) -> AccountRuntime:
+        runtime = self._require_runtime(account_id)
+        runtime.cooldown_until = None
+        if runtime.state == AccountRuntimeState.COOLING_DOWN:
+            self._set_state(runtime, AccountRuntimeState.DEGRADED, "cooldown cleared by operator")
+        return runtime
+
+    async def mark_reauth_required(self, account_id: str, reason: str) -> AccountRuntime:
+        runtime = self._require_runtime(account_id)
+        self._mark_reauth_required(runtime, reason)
+        return runtime
+
+    async def disable_runtime(self, account_id: str, reason: str) -> AccountRuntime:
+        runtime = self._require_runtime(account_id)
+        runtime.operator_disabled = True
+        self._set_state(runtime, AccountRuntimeState.DISABLED, reason)
+        return runtime
+
+    async def enable_runtime(self, account_id: str) -> AccountRuntime:
+        runtime = self._require_runtime(account_id)
+        runtime.operator_disabled = False
+        await self._refresh_runtime(runtime)
+        return runtime
+
+    async def refresh_account(self, account_id: str) -> AccountRuntime:
+        runtime = self._require_runtime(account_id)
+        await self._refresh_runtime(runtime)
+        return runtime
 
     async def refresh_if_due(self, force: bool = False) -> None:
         if not force and self._last_refresh_at is not None:
@@ -322,6 +354,9 @@ class AccountPool:
 
         if not runtime.config.enabled:
             self._set_state(runtime, AccountRuntimeState.DISABLED, "account disabled in inventory")
+            return
+        if runtime.operator_disabled:
+            self._set_state(runtime, AccountRuntimeState.DISABLED, "account disabled by operator")
             return
 
         if runtime.cooldown_until and runtime.cooldown_until > now:
@@ -542,6 +577,16 @@ class AccountPool:
         runtime.recent_errors.append(message)
         if len(runtime.recent_errors) > self.settings.recent_error_limit:
             runtime.recent_errors = runtime.recent_errors[-self.settings.recent_error_limit :]
+
+    def _require_runtime(self, account_id: str) -> AccountRuntime:
+        runtime = self._runtimes.get(account_id)
+        if runtime is None:
+            raise ServiceError(
+                status_code=404,
+                code="account_not_found",
+                message=f"Account {account_id} does not exist.",
+            )
+        return runtime
 
     def _set_state(self, runtime: AccountRuntime, state: AccountRuntimeState, reason: str | None) -> None:
         previous = runtime.state

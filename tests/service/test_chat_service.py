@@ -8,10 +8,16 @@ import pytest
 from gemini_service.adapters.base import AccountProbeResult, MessageChunk, MessageResult
 from gemini_service.core.config import Settings
 from gemini_service.core.errors import ServiceError
+from gemini_service.core.security import AuthContext
 from gemini_service.db.repository import ChatRepository
 from gemini_service.schemas.common import MessageRequest, SessionCreateRequest
 from gemini_service.services.account_pool import AccountPool
 from gemini_service.services.chat_service import ChatService
+
+
+ADMIN = AuthContext(subject="admin-user", role="admin", source="test")
+USER_A = AuthContext(subject="user-a", role="user", source="test")
+USER_B = AuthContext(subject="user-b", role="user", source="test")
 
 
 class FakeChatAdapter:
@@ -95,15 +101,16 @@ def test_chat_service_persists_session_and_history(tmp_path):
         await repo.start()
         await pool.start()
         service = ChatService(pool=pool, repository=repo)
-        session = await service.create_session(SessionCreateRequest(account_id="acc-1"))
+        session = await service.create_session(SessionCreateRequest(account_id="acc-1"), auth=ADMIN)
         response = await service.send_message(
             MessageRequest(
                 session_id=session.session_id,
                 message="hello",
                 idempotency_key="req-1",
-            )
+            ),
+            auth=ADMIN,
         )
-        history = await service.get_history(session.session_id)
+        history = await service.get_history(session.session_id, auth=ADMIN)
         await repo.close()
         await pool.close()
         return session, response, history
@@ -131,20 +138,22 @@ def test_chat_service_reuses_idempotent_response(tmp_path):
         await repo.start()
         await pool.start()
         service = ChatService(pool=pool, repository=repo)
-        session = await service.create_session(SessionCreateRequest(account_id="acc-1"))
+        session = await service.create_session(SessionCreateRequest(account_id="acc-1"), auth=ADMIN)
         first = await service.send_message(
             MessageRequest(
                 session_id=session.session_id,
                 message="hello",
                 idempotency_key="req-1",
-            )
+            ),
+            auth=ADMIN,
         )
         second = await service.send_message(
             MessageRequest(
                 session_id=session.session_id,
                 message="hello",
                 idempotency_key="req-1",
-            )
+            ),
+            auth=ADMIN,
         )
         await repo.close()
         await pool.close()
@@ -155,6 +164,47 @@ def test_chat_service_reuses_idempotent_response(tmp_path):
     assert first.cached is False
     assert second.cached is True
     assert adapter.calls == 1
+
+
+def test_chat_service_blocks_non_admin_account_pinning(tmp_path):
+    settings = _build_settings(tmp_path, [{"account_id": "acc-1", "secure_1psid": "cookie"}])
+    pool = AccountPool(settings, adapter_factory=lambda config: FakeChatAdapter("acc-1"))
+    repo = ChatRepository(settings.database_url)
+
+    async def scenario():
+        await repo.start()
+        await pool.start()
+        service = ChatService(pool=pool, repository=repo)
+        with pytest.raises(ServiceError) as exc:
+            await service.create_session(SessionCreateRequest(account_id="acc-1"), auth=USER_A)
+        await repo.close()
+        await pool.close()
+        return exc.value
+
+    error = _run(scenario())
+    assert error.code == "forbidden"
+
+
+def test_chat_service_enforces_session_ownership(tmp_path):
+    settings = _build_settings(tmp_path, [{"account_id": "acc-1", "secure_1psid": "cookie"}])
+    pool = AccountPool(settings, adapter_factory=lambda config: FakeChatAdapter("acc-1"))
+    repo = ChatRepository(settings.database_url)
+
+    async def scenario():
+        await repo.start()
+        await pool.start()
+        service = ChatService(pool=pool, repository=repo)
+        session = await service.create_session(SessionCreateRequest(), auth=USER_A)
+        with pytest.raises(ServiceError) as exc:
+            await service.get_history(session.session_id, auth=USER_B)
+        admin_history = await service.get_history(session.session_id, auth=ADMIN)
+        await repo.close()
+        await pool.close()
+        return exc.value, admin_history
+
+    error, admin_history = _run(scenario())
+    assert error.code == "forbidden"
+    assert admin_history.session_id
 
 
 def test_chat_service_keeps_sticky_session_without_failover(tmp_path):
@@ -179,14 +229,14 @@ def test_chat_service_keeps_sticky_session_without_failover(tmp_path):
         await repo.start()
         await pool.start()
         service = ChatService(pool=pool, repository=repo)
-        session = await service.create_session(SessionCreateRequest(account_id="acc-1", allow_failover=False))
+        session = await service.create_session(SessionCreateRequest(account_id="acc-1", allow_failover=False), auth=ADMIN)
 
         with pytest.raises(ServiceError) as first_error:
-            await service.send_message(MessageRequest(session_id=session.session_id, message="hello"))
+            await service.send_message(MessageRequest(session_id=session.session_id, message="hello"), auth=ADMIN)
         assert first_error.value.code == "provider_blocked"
 
         with pytest.raises(ServiceError) as second_error:
-            await service.send_message(MessageRequest(session_id=session.session_id, message="retry"))
+            await service.send_message(MessageRequest(session_id=session.session_id, message="retry"), auth=ADMIN)
         assert second_error.value.code == "preferred_account_unavailable"
 
         record = await repo.get_session(session.session_id)
@@ -218,7 +268,7 @@ def test_chat_service_can_fail_over_when_session_allows_it(tmp_path):
         await repo.start()
         await pool.start()
         service = ChatService(pool=pool, repository=repo)
-        session = await service.create_session(SessionCreateRequest(account_id="acc-1", allow_failover=True))
+        session = await service.create_session(SessionCreateRequest(account_id="acc-1", allow_failover=True), auth=ADMIN)
 
         runtime = pool.get_runtime("acc-1")
         assert runtime is not None
@@ -227,9 +277,9 @@ def test_chat_service_can_fail_over_when_session_allows_it(tmp_path):
             ServiceError(status_code=503, code="provider_blocked", message="blocked"),
         )
 
-        response = await service.send_message(MessageRequest(session_id=session.session_id, message="hello"))
+        response = await service.send_message(MessageRequest(session_id=session.session_id, message="hello"), auth=ADMIN)
         record = await repo.get_session(session.session_id)
-        history = await service.get_history(session.session_id)
+        history = await service.get_history(session.session_id, auth=ADMIN)
         await repo.close()
         await pool.close()
         return response, record, history

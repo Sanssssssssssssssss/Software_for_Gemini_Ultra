@@ -121,6 +121,36 @@ class BatchRequest(BaseModel):
     items: list[BatchItem]
 
 
+class BatchItemResponse(BaseModel):
+    external_id: str
+    status: str
+    session_id: str | None = None
+    requested_account_id: str | None = None
+    account_id: str | None = None
+    response_text: str | None = None
+    error_code: str | None = None
+    error_message: str | None = None
+
+
+class BatchResponse(BaseModel):
+    batch_id: str
+    status: str
+    total_items: int
+    completed_items: int
+    failed_items: int
+    requested_account_id: str | None = None
+    created_at: str | None = None
+    updated_at: str | None = None
+    items: list[BatchItemResponse] = Field(default_factory=list)
+
+
+class AdminActionResponse(BaseModel):
+    account_id: str
+    action: str
+    state: str
+    detail: str
+
+
 class SessionHistoryItem(BaseModel):
     role: Literal["user", "assistant", "system"]
     content: str

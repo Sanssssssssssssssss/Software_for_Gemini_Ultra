@@ -21,6 +21,7 @@ from .core.telemetry import TelemetryService
 from .db.repository import ChatRepository
 from .schemas.common import ApiError, ErrorResponse
 from .services.account_pool import AccountPool
+from .services.batch_service import BatchService
 from .services.chat_service import ChatService
 
 
@@ -33,11 +34,15 @@ async def lifespan(app: FastAPI):
     await repository.start()
     await pool.start()
     app.state.account_pool = pool
-    app.state.chat_service = ChatService(
+    chat_service = ChatService(
         pool=pool,
         repository=repository,
         telemetry=app.state.telemetry,
     )
+    batch_service = BatchService(repository=repository, chat_service=chat_service)
+    await batch_service.start()
+    app.state.chat_service = chat_service
+    app.state.batch_service = batch_service
     logging.getLogger("gemini_service").info(
         "service_startup",
         extra={
@@ -52,6 +57,7 @@ async def lifespan(app: FastAPI):
     try:
         yield
     finally:
+        await batch_service.close()
         await repository.close()
         await pool.close()
 
