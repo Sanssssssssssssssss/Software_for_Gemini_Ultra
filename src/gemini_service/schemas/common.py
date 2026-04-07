@@ -58,6 +58,10 @@ class AccountSummary(BaseModel):
     configured_max_concurrency: int = 1
     cooldown_until: str | None = None
     last_error: str | None = None
+    recent_errors: list[str] = Field(default_factory=list)
+    failure_count: int = 0
+    last_transition_at: str | None = None
+    state_reason: str | None = None
 
 
 class AccountsResponse(BaseModel):
@@ -69,6 +73,7 @@ class SessionCreateRequest(BaseModel):
     routing_policy: str = "sticky"
     model: str | None = None
     gem: str | None = None
+    allow_failover: bool = False
     metadata: dict[str, Any] = Field(default_factory=dict)
 
 
@@ -79,6 +84,7 @@ class SessionResponse(BaseModel):
     status: str
     model: str | None = None
     gem: str | None = None
+    allow_failover: bool = False
     gemini_metadata: list[str] = Field(default_factory=list)
     created_at: str | None = None
     updated_at: str | None = None

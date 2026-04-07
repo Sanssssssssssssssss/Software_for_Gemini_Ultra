@@ -78,6 +78,7 @@ async def metrics(
     telemetry: TelemetryService = get_telemetry(request)
     pool = get_account_pool(request)
     chat_service: ChatService = get_chat_service(request)
+    accounts = await pool.list_account_summaries()
     sessions = await chat_service.repository.count_sessions()
     messages = await chat_service.repository.count_messages()
     telemetry.update_runtime(
@@ -86,6 +87,7 @@ async def metrics(
         sessions=sessions,
         messages=messages,
     )
+    telemetry.update_account_pool(accounts)
     return Response(
         content=telemetry.render_prometheus(),
         media_type="text/plain; version=0.0.4; charset=utf-8",

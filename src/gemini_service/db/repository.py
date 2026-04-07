@@ -1,13 +1,18 @@
 from __future__ import annotations
 
 import json
+from datetime import datetime, timezone
 from pathlib import Path
 
-from sqlalchemy import select
-from sqlalchemy.engine import make_url
+from sqlalchemy import inspect, select
+from sqlalchemy.engine import Connection, make_url
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
 from .models import Base, MessageRecord, SessionRecord
+
+
+def utc_now_iso() -> str:
+    return datetime.now(timezone.utc).isoformat()
 
 
 class ChatRepository:
@@ -22,6 +27,7 @@ class ChatRepository:
         self.session_factory = async_sessionmaker(self.engine, expire_on_commit=False)
         async with self.engine.begin() as connection:
             await connection.run_sync(Base.metadata.create_all)
+            await connection.run_sync(self._run_migrations)
 
     async def close(self) -> None:
         if self.engine is not None:
@@ -33,6 +39,7 @@ class ChatRepository:
         routing_policy: str,
         model_name: str | None = None,
         gem_id: str | None = None,
+        allow_failover: bool = False,
         metadata: dict | None = None,
     ) -> SessionRecord:
         session_record = SessionRecord(
@@ -40,6 +47,7 @@ class ChatRepository:
             routing_policy=routing_policy,
             model_name=model_name,
             gem_id=gem_id,
+            allow_failover=allow_failover,
             metadata_json=json.dumps(metadata or {}, ensure_ascii=True),
         )
         async with self._session() as db:
@@ -64,6 +72,40 @@ class ChatRepository:
             record.gemini_cid = gemini_metadata[0] if len(gemini_metadata) > 0 else None
             record.gemini_rid = gemini_metadata[1] if len(gemini_metadata) > 1 else None
             record.gemini_rcid = gemini_metadata[2] if len(gemini_metadata) > 2 else None
+            await db.commit()
+            await db.refresh(record)
+            return record
+
+    async def record_failover(
+        self,
+        session_id: str,
+        from_account_id: str,
+        to_account_id: str,
+        reason: str,
+    ) -> SessionRecord | None:
+        async with self._session() as db:
+            record = await db.get(SessionRecord, session_id)
+            if record is None:
+                return None
+
+            metadata = self._load_metadata(record)
+            events = list(metadata.get("events", []))
+            events.append(
+                {
+                    "type": "failover",
+                    "from_account_id": from_account_id,
+                    "to_account_id": to_account_id,
+                    "reason": reason,
+                    "created_at": utc_now_iso(),
+                }
+            )
+            metadata["events"] = events
+
+            record.account_id = to_account_id
+            record.metadata_json = json.dumps(metadata, ensure_ascii=True)
+            record.gemini_cid = None
+            record.gemini_rid = None
+            record.gemini_rcid = None
             await db.commit()
             await db.refresh(record)
             return record
@@ -140,6 +182,20 @@ class ChatRepository:
         if not url.database or url.database == ":memory:":
             return
         Path(url.database).expanduser().resolve().parent.mkdir(parents=True, exist_ok=True)
+
+    def _run_migrations(self, connection: Connection) -> None:
+        inspector = inspect(connection)
+        columns = {column["name"] for column in inspector.get_columns("chat_sessions")}
+        if "allow_failover" not in columns:
+            connection.exec_driver_sql(
+                "ALTER TABLE chat_sessions ADD COLUMN allow_failover BOOLEAN NOT NULL DEFAULT 0"
+            )
+
+    def _load_metadata(self, record: SessionRecord) -> dict:
+        try:
+            return json.loads(record.metadata_json or "{}")
+        except json.JSONDecodeError:
+            return {}
 
     def _session(self) -> async_sessionmaker[AsyncSession]:
         if self.session_factory is None:

@@ -26,8 +26,14 @@ class Settings(BaseSettings):
     accounts_config_path: str = "config/accounts.json"
     min_ready_accounts: int = 1
     global_max_concurrency: int = 32
+    global_max_queue_depth: int = 128
+    per_account_max_queue_depth: int = 16
+    queue_wait_timeout_seconds: float = 30.0
     account_probe_interval_seconds: int = 30
     default_account_cooldown_seconds: int = 60
+    degraded_failure_threshold: int = 1
+    unavailable_failure_threshold: int = 3
+    recent_error_limit: int = 5
     ui_username: str = "admin"
     ui_password: str = "change-me-ui-password"
     ui_session_secret: str = "change-me-session-secret"

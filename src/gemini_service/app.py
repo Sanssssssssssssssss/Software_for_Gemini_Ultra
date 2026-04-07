@@ -33,7 +33,11 @@ async def lifespan(app: FastAPI):
     await repository.start()
     await pool.start()
     app.state.account_pool = pool
-    app.state.chat_service = ChatService(pool=pool, repository=repository)
+    app.state.chat_service = ChatService(
+        pool=pool,
+        repository=repository,
+        telemetry=app.state.telemetry,
+    )
     logging.getLogger("gemini_service").info(
         "service_startup",
         extra={

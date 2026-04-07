@@ -13,10 +13,15 @@ Current coverage includes:
 - health and readiness endpoints
 - API bearer auth
 - UI login and protected pages
+- setup diagnostics and bootstrap redirects
 - account pool selection and cooldown transitions
+- queue backpressure, queue timeout, and FIFO admission
 - durable chat session persistence
 - idempotent message replay behavior
+- sticky session behavior and opt-in failover
+- provider timeout and error mapping
 - metrics endpoint exposure
+- isolated test execution independent of local `.env` or `config/accounts.json`
 
 ## Smoke test
 
@@ -58,4 +63,4 @@ Recommended validation flow:
 2. Start the service with a small real account inventory.
 3. Run `smoke_test.py`.
 4. Run `load_test.py` with conservative settings.
-5. Inspect `/metrics` and `/admin` during the run.
+5. Inspect `/metrics`, `/admin`, and provider-call logs during the run.

@@ -43,6 +43,10 @@ The internal service lives in `src/gemini_service`. The current implementation a
 - durable sessions and history
 - internal LAN chat UI and admin page
 - metrics, smoke scripts, and load test harness
+- provider timeout handling and structured service errors
+- isolated service tests that do not depend on local `.env` or `config/accounts.json`
+- explicit account runtime states, bounded queueing, and backpressure
+- sticky sessions with opt-in failover and persisted failover events
 
 Recommended first-run flow:
 
@@ -79,6 +83,8 @@ Useful endpoints:
 - `GET /admin`
 
 UI authentication uses `.env` values from `GEMINI_SERVICE_UI_USERNAME` and `GEMINI_SERVICE_UI_PASSWORD`. API authentication uses `GEMINI_SERVICE_API_TOKENS`.
+The current chat UI still exposes manual account selection for debugging, while automatic routing remains the preferred default behavior.
+`/v1/batches` remains intentionally unimplemented in the current phase and still returns `501`.
 
 ## Documentation
 

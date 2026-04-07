@@ -1,9 +1,13 @@
 from __future__ import annotations
 
 import json
+import logging
+import time
 from collections.abc import AsyncIterator
 
 from ..core.errors import ServiceError
+from ..core.middleware import get_request_id
+from ..core.telemetry import TelemetryService
 from ..db.models import MessageRecord, SessionRecord
 from ..db.repository import ChatRepository
 from ..schemas.common import (
@@ -14,13 +18,15 @@ from ..schemas.common import (
     SessionHistoryResponse,
     SessionResponse,
 )
-from .account_pool import AccountPool
+from .account_pool import AccountPool, AccountSelection
 
 
 class ChatService:
-    def __init__(self, pool: AccountPool, repository: ChatRepository):
+    def __init__(self, pool: AccountPool, repository: ChatRepository, telemetry: TelemetryService | None = None):
         self.pool = pool
         self.repository = repository
+        self.telemetry = telemetry
+        self.logger = logging.getLogger("gemini_service.provider")
 
     async def create_session(self, request: SessionCreateRequest) -> SessionResponse:
         runtime = await self.pool.choose_account(
@@ -32,6 +38,7 @@ class ChatService:
             routing_policy=request.routing_policy,
             model_name=request.model,
             gem_id=request.gem,
+            allow_failover=request.allow_failover,
             metadata=request.metadata,
         )
         return self._session_response(record)
@@ -73,31 +80,48 @@ class ChatService:
         return [self._session_response(record) for record in records]
 
     async def send_message(self, request: MessageRequest) -> MessageResponse:
-        record = await self.repository.get_session(request.session_id)
-        if record is None:
-            raise ServiceError(
-                status_code=404,
-                code="session_not_found",
-                message=f"Session {request.session_id} does not exist.",
-            )
-
+        record = await self._require_session(request.session_id)
         cached = await self._maybe_get_cached_response(record, request.idempotency_key)
         if cached is not None:
             return cached
 
+        selection, record = await self._prepare_session_runtime(record)
         lease = await self.pool.acquire(
-            preferred_account_id=record.account_id,
+            preferred_account_id=selection.runtime.config.account_id,
             require_preferred=True,
+            allow_failover=False,
         )
+        started = time.perf_counter()
         async with lease as runtime:
-            result = await runtime.adapter.send_message(
-                prompt=request.message,
-                chat_metadata=self._metadata_from_record(record),
-                model=record.model_name,
-                gem=record.gem_id,
-                temporary=request.temporary,
-            )
+            try:
+                result = await runtime.adapter.send_message(
+                    prompt=request.message,
+                    chat_metadata=self._metadata_from_record(record),
+                    model=record.model_name,
+                    gem=record.gem_id,
+                    temporary=request.temporary,
+                )
+            except ServiceError as exc:
+                self.pool.record_provider_failure(runtime, exc)
+                self._log_provider_event(
+                    operation="send_message",
+                    session_id=record.id,
+                    account_id=runtime.config.account_id,
+                    result="error",
+                    duration_ms=(time.perf_counter() - started) * 1000,
+                    error=exc,
+                )
+                raise
+            else:
+                self.pool.record_provider_success(runtime)
 
+        self._log_provider_event(
+            operation="send_message",
+            session_id=record.id,
+            account_id=record.account_id,
+            result="success",
+            duration_ms=(time.perf_counter() - started) * 1000,
+        )
         updated = await self.repository.update_session_metadata(record.id, result.metadata)
         user_message = await self.repository.add_message(
             session_id=record.id,
@@ -119,46 +143,63 @@ class ChatService:
         )
 
     async def stream_message(self, request: MessageRequest) -> AsyncIterator[str]:
-        record = await self.repository.get_session(request.session_id)
-        if record is None:
-            raise ServiceError(
-                status_code=404,
-                code="session_not_found",
-                message=f"Session {request.session_id} does not exist.",
-            )
-
+        record = await self._require_session(request.session_id)
         cached = await self._maybe_get_cached_response(record, request.idempotency_key)
         if cached is not None:
             yield self._sse("chunk", {"text_delta": cached.content, "cached": True})
             yield self._sse("done", cached.model_dump(mode="json"))
             return
 
+        selection, record = await self._prepare_session_runtime(record)
         lease = await self.pool.acquire(
-            preferred_account_id=record.account_id,
+            preferred_account_id=selection.runtime.config.account_id,
             require_preferred=True,
+            allow_failover=False,
         )
         accumulated_text = ""
         final_metadata = self._metadata_from_record(record)
+        started = time.perf_counter()
         async with lease as runtime:
-            async for chunk in runtime.adapter.stream_message(
-                prompt=request.message,
-                chat_metadata=final_metadata,
-                model=record.model_name,
-                gem=record.gem_id,
-                temporary=request.temporary,
-            ):
-                accumulated_text = chunk.text or (accumulated_text + chunk.text_delta)
-                if chunk.metadata:
-                    final_metadata = chunk.metadata
-                yield self._sse(
-                    "chunk",
-                    {
-                        "session_id": record.id,
-                        "account_id": record.account_id,
-                        "text_delta": chunk.text_delta,
-                    },
+            try:
+                async for chunk in runtime.adapter.stream_message(
+                    prompt=request.message,
+                    chat_metadata=final_metadata,
+                    model=record.model_name,
+                    gem=record.gem_id,
+                    temporary=request.temporary,
+                ):
+                    accumulated_text = chunk.text or (accumulated_text + chunk.text_delta)
+                    if chunk.metadata:
+                        final_metadata = chunk.metadata
+                    yield self._sse(
+                        "chunk",
+                        {
+                            "session_id": record.id,
+                            "account_id": runtime.config.account_id,
+                            "text_delta": chunk.text_delta,
+                        },
+                    )
+            except ServiceError as exc:
+                self.pool.record_provider_failure(runtime, exc)
+                self._log_provider_event(
+                    operation="stream_message",
+                    session_id=record.id,
+                    account_id=runtime.config.account_id,
+                    result="error",
+                    duration_ms=(time.perf_counter() - started) * 1000,
+                    error=exc,
                 )
+                raise
+            else:
+                self.pool.record_provider_success(runtime)
 
+        self._log_provider_event(
+            operation="stream_message",
+            session_id=record.id,
+            account_id=record.account_id,
+            result="success",
+            duration_ms=(time.perf_counter() - started) * 1000,
+        )
         updated = await self.repository.update_session_metadata(record.id, final_metadata)
         user_message = await self.repository.add_message(
             session_id=record.id,
@@ -179,6 +220,43 @@ class ChatService:
             user_message_id=user_message.id,
         )
         yield self._sse("done", response.model_dump(mode="json"))
+
+    async def _require_session(self, session_id: str) -> SessionRecord:
+        record = await self.repository.get_session(session_id)
+        if record is None:
+            raise ServiceError(
+                status_code=404,
+                code="session_not_found",
+                message=f"Session {session_id} does not exist.",
+            )
+        return record
+
+    async def _prepare_session_runtime(self, record: SessionRecord) -> tuple[AccountSelection, SessionRecord]:
+        selection = await self.pool.resolve_session_account(
+            preferred_account_id=record.account_id,
+            allow_failover=record.allow_failover,
+        )
+        if selection.failover_from is None:
+            return selection, record
+
+        updated = await self.repository.record_failover(
+            session_id=record.id,
+            from_account_id=selection.failover_from,
+            to_account_id=selection.runtime.config.account_id,
+            reason=selection.reason or "automatic failover",
+        )
+        self.logger.warning(
+            "session_failover",
+            extra={
+                "event": "session_failover",
+                "request_id": get_request_id(),
+                "session_id": record.id,
+                "from_account_id": selection.failover_from,
+                "to_account_id": selection.runtime.config.account_id,
+                "reason": selection.reason or "",
+            },
+        )
+        return selection, updated or record
 
     async def _maybe_get_cached_response(
         self,
@@ -205,6 +283,7 @@ class ChatService:
             status=record.status,
             model=record.model_name,
             gem=record.gem_id,
+            allow_failover=record.allow_failover,
             gemini_metadata=self._metadata_from_record(record),
             created_at=record.created_at.isoformat() if record.created_at else None,
             updated_at=record.updated_at.isoformat() if record.updated_at else None,
@@ -234,6 +313,38 @@ class ChatService:
             record.gemini_rid or "",
             record.gemini_rcid or "",
         ]
+
+    def _log_provider_event(
+        self,
+        operation: str,
+        session_id: str,
+        account_id: str,
+        result: str,
+        duration_ms: float,
+        error: ServiceError | None = None,
+    ) -> None:
+        payload = {
+            "event": "provider_call",
+            "request_id": get_request_id(),
+            "session_id": session_id,
+            "account_id": account_id,
+            "operation": operation,
+            "result": result,
+            "duration_ms": round(duration_ms, 2),
+        }
+        error_code = ""
+        if error is not None:
+            payload["error_code"] = error.code
+            payload["error_details"] = error.details
+            error_code = error.code
+        if self.telemetry is not None:
+            self.telemetry.record_provider_call(
+                account_id=account_id,
+                operation=operation,
+                result=result,
+                error_code=error_code,
+            )
+        self.logger.info("provider_call", extra=payload)
 
     def _sse(self, event: str, payload: dict) -> str:
         return f"event: {event}\ndata: {json.dumps(payload, ensure_ascii=True)}\n\n"

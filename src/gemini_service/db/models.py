@@ -3,7 +3,7 @@ from __future__ import annotations
 from datetime import datetime, timezone
 from uuid import uuid4
 
-from sqlalchemy import DateTime, ForeignKey, String, Text
+from sqlalchemy import Boolean, DateTime, ForeignKey, String, Text
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
 
 
@@ -22,6 +22,7 @@ class SessionRecord(Base):
     account_id: Mapped[str] = mapped_column(String(128), index=True)
     routing_policy: Mapped[str] = mapped_column(String(32), default="sticky")
     status: Mapped[str] = mapped_column(String(32), default="active")
+    allow_failover: Mapped[bool] = mapped_column(Boolean, default=False)
     model_name: Mapped[str | None] = mapped_column(String(128), nullable=True)
     gem_id: Mapped[str | None] = mapped_column(String(128), nullable=True)
     metadata_json: Mapped[str] = mapped_column(Text, default="{}")
