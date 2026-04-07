@@ -22,8 +22,10 @@ from .core.telemetry import TelemetryService
 from .db.repository import ChatRepository
 from .schemas.common import ApiError, ErrorResponse
 from .services.account_pool import AccountPool
+from .services.asset_service import AssetService
 from .services.batch_service import BatchService
 from .services.chat_service import ChatService
+from .storage.local import LocalAssetStorage
 
 
 @asynccontextmanager
@@ -32,12 +34,20 @@ async def lifespan(app: FastAPI):
     configure_logging(settings)
     pool = AccountPool(settings)
     repository = ChatRepository(settings.database_url)
+    asset_storage = LocalAssetStorage(settings.asset_root_path)
     await repository.start()
     await pool.start()
     app.state.account_pool = pool
+    asset_service = AssetService(
+        settings=settings,
+        repository=repository,
+        storage=asset_storage,
+    )
+    app.state.asset_service = asset_service
     chat_service = ChatService(
         pool=pool,
         repository=repository,
+        asset_service=asset_service,
         telemetry=app.state.telemetry,
     )
     batch_service = BatchService(repository=repository, chat_service=chat_service)

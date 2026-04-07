@@ -8,7 +8,15 @@ from sqlalchemy import inspect, select
 from sqlalchemy.engine import Connection, make_url
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
-from .models import Base, BatchItemRecord, BatchRecord, MessageRecord, SessionRecord
+from .models import (
+    Base,
+    BatchItemRecord,
+    BatchRecord,
+    MediaAssetRecord,
+    MessagePartRecord,
+    MessageRecord,
+    SessionRecord,
+)
 
 
 def utc_now_iso() -> str:
@@ -60,7 +68,7 @@ class ChatRepository:
             model_name=model_name,
             gem_id=gem_id,
             allow_failover=allow_failover,
-            metadata_json=json.dumps(metadata or {}, ensure_ascii=True),
+            metadata_json=self._dump_metadata(metadata),
         )
         async with self._session() as db:
             db.add(session_record)
@@ -114,7 +122,7 @@ class ChatRepository:
             metadata["events"] = events
 
             record.account_id = to_account_id
-            record.metadata_json = json.dumps(metadata, ensure_ascii=True)
+            record.metadata_json = self._dump_metadata(metadata)
             record.gemini_cid = None
             record.gemini_rid = None
             record.gemini_rcid = None
@@ -128,6 +136,7 @@ class ChatRepository:
         role: str,
         content: str,
         idempotency_key: str | None = None,
+        parts: list[dict] | None = None,
     ) -> MessageRecord:
         record = MessageRecord(
             session_id=session_id,
@@ -135,8 +144,107 @@ class ChatRepository:
             content=content,
             idempotency_key=idempotency_key,
         )
+        part_records = [
+            MessagePartRecord(
+                order_index=index,
+                part_type=str(part.get("part_type", "text")),
+                text_content=part.get("text_content"),
+                asset_id=part.get("asset_id"),
+                metadata_json=self._dump_metadata(part.get("metadata")),
+            )
+            for index, part in enumerate(parts or [])
+        ]
+        if part_records:
+            record.parts = part_records
         async with self._session() as db:
             db.add(record)
+            await db.commit()
+            await db.refresh(record)
+            return record
+
+    async def create_asset(
+        self,
+        *,
+        owner_subject: str,
+        filename: str,
+        mime_type: str,
+        size_bytes: int,
+        sha256: str,
+        status: str,
+        storage_backend: str,
+        storage_uri: str,
+        provider_ref: str | None = None,
+        metadata: dict | None = None,
+        expires_at: datetime | None = None,
+    ) -> MediaAssetRecord:
+        record = MediaAssetRecord(
+            owner_subject=owner_subject,
+            filename=filename,
+            mime_type=mime_type,
+            size_bytes=size_bytes,
+            sha256=sha256,
+            status=status,
+            storage_backend=storage_backend,
+            storage_uri=storage_uri,
+            provider_ref=provider_ref,
+            metadata_json=self._dump_metadata(metadata),
+            expires_at=expires_at,
+        )
+        async with self._session() as db:
+            db.add(record)
+            await db.commit()
+            await db.refresh(record)
+            return record
+
+    async def get_asset(self, asset_id: str) -> MediaAssetRecord | None:
+        async with self._session() as db:
+            return await db.get(MediaAssetRecord, asset_id)
+
+    async def mark_asset_stored(
+        self,
+        *,
+        asset_id: str,
+        storage_backend: str,
+        storage_uri: str,
+        status: str = "available",
+    ) -> MediaAssetRecord | None:
+        async with self._session() as db:
+            record = await db.get(MediaAssetRecord, asset_id)
+            if record is None:
+                return None
+            record.storage_backend = storage_backend
+            record.storage_uri = storage_uri
+            record.status = status
+            await db.commit()
+            await db.refresh(record)
+            return record
+
+    async def mark_asset_failed(self, asset_id: str, error_message: str) -> MediaAssetRecord | None:
+        async with self._session() as db:
+            record = await db.get(MediaAssetRecord, asset_id)
+            if record is None:
+                return None
+            metadata = self._load_metadata(record.metadata_json)
+            metadata["last_error"] = error_message
+            record.metadata_json = self._dump_metadata(metadata)
+            record.status = "failed"
+            await db.commit()
+            await db.refresh(record)
+            return record
+
+    async def bind_asset_to_message(
+        self,
+        *,
+        asset_id: str,
+        session_id: str,
+        message_id: str,
+    ) -> MediaAssetRecord | None:
+        async with self._session() as db:
+            record = await db.get(MediaAssetRecord, asset_id)
+            if record is None:
+                return None
+            record.session_id = session_id
+            record.message_id = message_id
             await db.commit()
             await db.refresh(record)
             return record
@@ -147,6 +255,15 @@ class ChatRepository:
                 select(MessageRecord)
                 .where(MessageRecord.session_id == session_id)
                 .order_by(MessageRecord.created_at.asc())
+            )
+            return list(result.scalars())
+
+    async def list_message_parts(self, message_id: str) -> list[MessagePartRecord]:
+        async with self._session() as db:
+            result = await db.execute(
+                select(MessagePartRecord)
+                .where(MessagePartRecord.message_id == message_id)
+                .order_by(MessagePartRecord.order_index.asc(), MessagePartRecord.created_at.asc())
             )
             return list(result.scalars())
 
@@ -338,12 +455,21 @@ class ChatRepository:
                 connection.exec_driver_sql(
                     "ALTER TABLE chat_sessions ADD COLUMN owner_subject VARCHAR(255) NOT NULL DEFAULT 'system'"
                 )
+        if inspector.has_table("chat_messages"):
+            message_columns = {column["name"] for column in inspector.get_columns("chat_messages")}
+            if "content" not in message_columns:
+                connection.exec_driver_sql(
+                    "ALTER TABLE chat_messages ADD COLUMN content TEXT NOT NULL DEFAULT ''"
+                )
 
     def _load_metadata(self, raw: str) -> dict:
         try:
             return json.loads(raw or "{}")
         except json.JSONDecodeError:
             return {}
+
+    def _dump_metadata(self, value: dict | None) -> str:
+        return json.dumps(value or {}, ensure_ascii=True)
 
     async def _refresh_batch_status(
         self,

@@ -4,15 +4,17 @@ import asyncio
 
 import pytest
 
-from gemini_service.adapters.base import AccountProbeResult, MessageResult
+from gemini_service.adapters.base import AccountProbeResult, MessageResult, PromptPart, TextPromptPart
 from gemini_service.core.config import Settings
 from gemini_service.core.errors import ServiceError
 from gemini_service.core.security import AuthContext
 from gemini_service.db.repository import ChatRepository
 from gemini_service.schemas.common import BatchItem, BatchRequest
 from gemini_service.services.account_pool import AccountPool
+from gemini_service.services.asset_service import AssetService
 from gemini_service.services.batch_service import BatchService
 from gemini_service.services.chat_service import ChatService
+from gemini_service.storage.local import LocalAssetStorage
 
 
 ADMIN = AuthContext(subject="admin-user", role="admin", source="test")
@@ -32,7 +34,8 @@ class FakeBatchAdapter:
             models=["gemini-3-pro"],
         )
 
-    async def send_message(self, prompt: str, **kwargs) -> MessageResult:
+    async def send_message(self, parts: list[PromptPart], **kwargs) -> MessageResult:
+        prompt = "\n\n".join(part.text for part in parts if isinstance(part, TextPromptPart))
         if "fail" in prompt:
             raise ServiceError(status_code=503, code="provider_unavailable", message="simulated failure")
         return MessageResult(
@@ -40,7 +43,7 @@ class FakeBatchAdapter:
             metadata=[f"{self.account_id}-cid", f"{self.account_id}-rid", f"{self.account_id}-rcid"],
         )
 
-    async def stream_message(self, prompt: str, **kwargs):
+    async def stream_message(self, parts: list[PromptPart], **kwargs):
         raise NotImplementedError
 
     async def close(self) -> None:
@@ -69,11 +72,12 @@ def test_batch_service_executes_and_persists_results(tmp_path):
     settings = _build_settings(tmp_path, [{"account_id": "acc-1", "secure_1psid": "cookie"}])
     pool = AccountPool(settings, adapter_factory=lambda config: FakeBatchAdapter(config.account_id))
     repo = ChatRepository(settings.database_url)
+    asset_service = AssetService(settings=settings, repository=repo, storage=LocalAssetStorage(str(tmp_path / "assets")))
 
     async def scenario():
         await repo.start()
         await pool.start()
-        chat = ChatService(pool=pool, repository=repo)
+        chat = ChatService(pool=pool, repository=repo, asset_service=asset_service)
         batches = BatchService(repository=repo, chat_service=chat)
         await batches.start()
         batch = await batches.create_batch(
@@ -107,11 +111,12 @@ def test_batch_service_enforces_ownership(tmp_path):
     settings = _build_settings(tmp_path, [{"account_id": "acc-1", "secure_1psid": "cookie"}])
     pool = AccountPool(settings, adapter_factory=lambda config: FakeBatchAdapter(config.account_id))
     repo = ChatRepository(settings.database_url)
+    asset_service = AssetService(settings=settings, repository=repo, storage=LocalAssetStorage(str(tmp_path / "assets")))
 
     async def scenario():
         await repo.start()
         await pool.start()
-        chat = ChatService(pool=pool, repository=repo)
+        chat = ChatService(pool=pool, repository=repo, asset_service=asset_service)
         batches = BatchService(repository=repo, chat_service=chat)
         await batches.start()
         batch = await batches.create_batch(

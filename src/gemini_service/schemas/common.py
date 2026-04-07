@@ -1,8 +1,8 @@
 from __future__ import annotations
 
-from typing import Any, Literal
+from typing import Annotated, Any, Literal
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 
 
 class ApiError(BaseModel):
@@ -90,19 +90,76 @@ class SessionResponse(BaseModel):
     updated_at: str | None = None
 
 
+class MessageTextPart(BaseModel):
+    type: Literal["text"]
+    text: str
+
+
+class MessageAssetPart(BaseModel):
+    type: Literal["asset"]
+    asset_id: str
+
+
+MessagePart = Annotated[MessageTextPart | MessageAssetPart, Field(discriminator="type")]
+
+
+class AssetResponse(BaseModel):
+    asset_id: str
+    owner_subject: str
+    filename: str
+    mime_type: str
+    size_bytes: int
+    sha256: str
+    status: str
+    storage_backend: str
+    provider_ref: str | None = None
+    created_at: str | None = None
+    expires_at: str | None = None
+    metadata: dict[str, Any] = Field(default_factory=dict)
+
+
+class UploadResponse(BaseModel):
+    asset: AssetResponse
+
+
 class MessageRequest(BaseModel):
     session_id: str
-    message: str
+    message: str | None = None
+    parts: list[MessagePart] = Field(default_factory=list)
     stream: bool = False
-    temporary: bool = False
+    temporary: bool | None = None
     idempotency_key: str | None = None
     metadata: dict[str, Any] = Field(default_factory=dict)
+
+    @model_validator(mode="after")
+    def validate_payload(self) -> "MessageRequest":
+        if self.message and self.parts:
+            raise ValueError("Provide either 'message' or 'parts', not both.")
+        if not self.message and not self.parts:
+            raise ValueError("A message requires either 'message' or 'parts'.")
+        return self
+
+
+class MessageMedia(BaseModel):
+    asset_id: str
+    mime_type: str
+    filename: str
+    media_type: Literal["image"]
+    content_url: str
+
+
+class MessageResponsePart(BaseModel):
+    type: Literal["text", "asset"]
+    text: str | None = None
+    asset: AssetResponse | None = None
 
 
 class MessageResponse(BaseModel):
     session_id: str
     account_id: str
     content: str
+    parts: list[MessageResponsePart] = Field(default_factory=list)
+    media: list[MessageMedia] = Field(default_factory=list)
     cached: bool = False
     message_id: str
     user_message_id: str | None = None
@@ -154,6 +211,8 @@ class AdminActionResponse(BaseModel):
 class SessionHistoryItem(BaseModel):
     role: Literal["user", "assistant", "system"]
     content: str
+    parts: list[MessageResponsePart] = Field(default_factory=list)
+    media: list[MessageMedia] = Field(default_factory=list)
     created_at: str | None = None
     idempotency_key: str | None = None
 

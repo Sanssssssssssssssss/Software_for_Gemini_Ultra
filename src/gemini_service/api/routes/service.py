@@ -1,13 +1,14 @@
 from __future__ import annotations
 
-from fastapi import APIRouter, Depends
-from fastapi.responses import StreamingResponse
+from fastapi import APIRouter, Depends, File, Form, UploadFile
+from fastapi.responses import FileResponse, StreamingResponse
 
 from ...core.errors import ServiceError
 from ...core.security import AuthContext
 from ...schemas.common import (
     AccountsResponse,
     AdminActionResponse,
+    AssetResponse,
     BatchRequest,
     BatchResponse,
     MessageRequest,
@@ -15,12 +16,15 @@ from ...schemas.common import (
     SessionCreateRequest,
     SessionHistoryResponse,
     SessionResponse,
+    UploadResponse,
 )
 from ...services.account_pool import AccountPool
+from ...services.asset_service import AssetService
 from ...services.batch_service import BatchService
 from ...services.chat_service import ChatService
 from ..dependencies import (
     get_account_pool,
+    get_asset_service,
     get_batch_service,
     get_chat_service,
     get_telemetry,
@@ -30,6 +34,75 @@ from ..dependencies import (
 from ...core.telemetry import TelemetryService
 
 router = APIRouter()
+
+
+def asset_service_response(asset) -> AssetResponse:
+    metadata_loader = getattr(asset, "metadata_json", "{}")
+    import json
+
+    try:
+        metadata = json.loads(metadata_loader or "{}")
+    except json.JSONDecodeError:
+        metadata = {}
+    return AssetResponse(
+        asset_id=asset.id,
+        owner_subject=asset.owner_subject,
+        filename=asset.filename,
+        mime_type=asset.mime_type,
+        size_bytes=asset.size_bytes,
+        sha256=asset.sha256,
+        status=asset.status,
+        storage_backend=asset.storage_backend,
+        provider_ref=asset.provider_ref,
+        created_at=asset.created_at.isoformat() if asset.created_at else None,
+        expires_at=asset.expires_at.isoformat() if asset.expires_at else None,
+        metadata=metadata,
+    )
+
+
+@router.post("/v1/uploads", response_model=UploadResponse, tags=["assets"])
+async def create_upload(
+    file: UploadFile = File(...),
+    temporary: bool = Form(True),
+    auth: AuthContext | None = Depends(require_api_token),
+    asset_service: AssetService = Depends(get_asset_service),
+) -> UploadResponse:
+    assert auth is not None
+    asset = await asset_service.create_upload(
+        auth=auth,
+        upload=file,
+        temporary=temporary,
+    )
+    return UploadResponse(asset=asset_service_response(asset))
+
+
+@router.get("/v1/assets/{asset_id}", response_model=AssetResponse, tags=["assets"])
+async def get_asset(
+    asset_id: str,
+    auth: AuthContext | None = Depends(require_api_token),
+    asset_service: AssetService = Depends(get_asset_service),
+) -> AssetResponse:
+    assert auth is not None
+    asset = await asset_service.get_asset_for_read(asset_id=asset_id, auth=auth)
+    return asset_service_response(asset)
+
+
+@router.get("/v1/assets/{asset_id}/content", tags=["assets"])
+async def get_asset_content(
+    asset_id: str,
+    auth: AuthContext | None = Depends(require_api_token),
+    asset_service: AssetService = Depends(get_asset_service),
+):
+    assert auth is not None
+    asset = await asset_service.get_asset_for_read(asset_id=asset_id, auth=auth)
+    if asset.status != "available":
+        raise ServiceError(
+            status_code=409,
+            code="asset_not_available",
+            message="The requested asset is not available for download.",
+        )
+    path = asset_service.resolve_asset_path(asset)
+    return FileResponse(path, media_type=asset.mime_type, filename=asset.filename)
 
 
 @router.get("/v1/accounts", response_model=AccountsResponse, tags=["accounts"])

@@ -34,6 +34,10 @@ Current coverage includes:
 - isolated test execution independent of local `.env` or `config/accounts.json`
 - frontend UI session-cookie behavior in local mock mode
 - UI admin overview and async admin JSON actions
+- upload API, asset permission checks, and local asset download
+- multimodal message schema compatibility (`message` vs `parts`)
+- service-side file attachment persistence and history replay
+- SSE `media` events for generated image payloads
 
 ## Playwright E2E
 

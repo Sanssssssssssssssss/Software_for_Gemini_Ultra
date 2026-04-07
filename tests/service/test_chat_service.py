@@ -5,14 +5,16 @@ from collections.abc import AsyncIterator
 
 import pytest
 
-from gemini_service.adapters.base import AccountProbeResult, MessageChunk, MessageResult
+from gemini_service.adapters.base import AccountProbeResult, MessageChunk, MessageResult, PromptPart, TextPromptPart
 from gemini_service.core.config import Settings
 from gemini_service.core.errors import ServiceError
 from gemini_service.core.security import AuthContext
 from gemini_service.db.repository import ChatRepository
 from gemini_service.schemas.common import MessageRequest, SessionCreateRequest
 from gemini_service.services.account_pool import AccountPool
+from gemini_service.services.asset_service import AssetService
 from gemini_service.services.chat_service import ChatService
+from gemini_service.storage.local import LocalAssetStorage
 
 
 ADMIN = AuthContext(subject="admin-user", role="admin", source="test")
@@ -36,7 +38,7 @@ class FakeChatAdapter:
 
     async def send_message(
         self,
-        prompt: str,
+        parts: list[PromptPart],
         chat_metadata: list[str] | None = None,
         model: str | None = None,
         gem: str | None = None,
@@ -45,6 +47,7 @@ class FakeChatAdapter:
         self.calls += 1
         if self.send_error is not None:
             raise self.send_error
+        prompt = "\n\n".join(part.text for part in parts if isinstance(part, TextPromptPart))
         return MessageResult(
             text=f"{self.account_id}:echo:{prompt}",
             metadata=[f"{self.account_id}-cid", f"{self.account_id}-rid", f"{self.account_id}-rcid"],
@@ -52,7 +55,7 @@ class FakeChatAdapter:
 
     async def stream_message(
         self,
-        prompt: str,
+        parts: list[PromptPart],
         chat_metadata: list[str] | None = None,
         model: str | None = None,
         gem: str | None = None,
@@ -60,6 +63,7 @@ class FakeChatAdapter:
     ) -> AsyncIterator[MessageChunk]:
         if self.send_error is not None:
             raise self.send_error
+        prompt = "\n\n".join(part.text for part in parts if isinstance(part, TextPromptPart))
         yield MessageChunk(
             text_delta=f"{self.account_id}:echo:{prompt}",
             text=f"{self.account_id}:echo:{prompt}",
@@ -96,11 +100,12 @@ def test_chat_service_persists_session_and_history(tmp_path):
     adapter = FakeChatAdapter("acc-1")
     pool = AccountPool(settings, adapter_factory=lambda config: adapter)
     repo = ChatRepository(settings.database_url)
+    asset_service = AssetService(settings=settings, repository=repo, storage=LocalAssetStorage(str(tmp_path / "assets")))
 
     async def scenario():
         await repo.start()
         await pool.start()
-        service = ChatService(pool=pool, repository=repo)
+        service = ChatService(pool=pool, repository=repo, asset_service=asset_service)
         session = await service.create_session(SessionCreateRequest(account_id="acc-1"), auth=ADMIN)
         response = await service.send_message(
             MessageRequest(
@@ -133,11 +138,12 @@ def test_chat_service_reuses_idempotent_response(tmp_path):
     adapter = FakeChatAdapter("acc-1")
     pool = AccountPool(settings, adapter_factory=lambda config: adapter)
     repo = ChatRepository(settings.database_url)
+    asset_service = AssetService(settings=settings, repository=repo, storage=LocalAssetStorage(str(tmp_path / "assets")))
 
     async def scenario():
         await repo.start()
         await pool.start()
-        service = ChatService(pool=pool, repository=repo)
+        service = ChatService(pool=pool, repository=repo, asset_service=asset_service)
         session = await service.create_session(SessionCreateRequest(account_id="acc-1"), auth=ADMIN)
         first = await service.send_message(
             MessageRequest(
@@ -170,11 +176,12 @@ def test_chat_service_blocks_non_admin_account_pinning(tmp_path):
     settings = _build_settings(tmp_path, [{"account_id": "acc-1", "secure_1psid": "cookie"}])
     pool = AccountPool(settings, adapter_factory=lambda config: FakeChatAdapter("acc-1"))
     repo = ChatRepository(settings.database_url)
+    asset_service = AssetService(settings=settings, repository=repo, storage=LocalAssetStorage(str(tmp_path / "assets")))
 
     async def scenario():
         await repo.start()
         await pool.start()
-        service = ChatService(pool=pool, repository=repo)
+        service = ChatService(pool=pool, repository=repo, asset_service=asset_service)
         with pytest.raises(ServiceError) as exc:
             await service.create_session(SessionCreateRequest(account_id="acc-1"), auth=USER_A)
         await repo.close()
@@ -189,11 +196,12 @@ def test_chat_service_enforces_session_ownership(tmp_path):
     settings = _build_settings(tmp_path, [{"account_id": "acc-1", "secure_1psid": "cookie"}])
     pool = AccountPool(settings, adapter_factory=lambda config: FakeChatAdapter("acc-1"))
     repo = ChatRepository(settings.database_url)
+    asset_service = AssetService(settings=settings, repository=repo, storage=LocalAssetStorage(str(tmp_path / "assets")))
 
     async def scenario():
         await repo.start()
         await pool.start()
-        service = ChatService(pool=pool, repository=repo)
+        service = ChatService(pool=pool, repository=repo, asset_service=asset_service)
         session = await service.create_session(SessionCreateRequest(), auth=USER_A)
         with pytest.raises(ServiceError) as exc:
             await service.get_history(session.session_id, auth=USER_B)
@@ -224,11 +232,12 @@ def test_chat_service_keeps_sticky_session_without_failover(tmp_path):
     }
     pool = AccountPool(settings, adapter_factory=lambda config: adapters[config.account_id])
     repo = ChatRepository(settings.database_url)
+    asset_service = AssetService(settings=settings, repository=repo, storage=LocalAssetStorage(str(tmp_path / "assets")))
 
     async def scenario():
         await repo.start()
         await pool.start()
-        service = ChatService(pool=pool, repository=repo)
+        service = ChatService(pool=pool, repository=repo, asset_service=asset_service)
         session = await service.create_session(SessionCreateRequest(account_id="acc-1", allow_failover=False), auth=ADMIN)
 
         with pytest.raises(ServiceError) as first_error:
@@ -263,11 +272,12 @@ def test_chat_service_can_fail_over_when_session_allows_it(tmp_path):
     }
     pool = AccountPool(settings, adapter_factory=lambda config: adapters[config.account_id])
     repo = ChatRepository(settings.database_url)
+    asset_service = AssetService(settings=settings, repository=repo, storage=LocalAssetStorage(str(tmp_path / "assets")))
 
     async def scenario():
         await repo.start()
         await pool.start()
-        service = ChatService(pool=pool, repository=repo)
+        service = ChatService(pool=pool, repository=repo, asset_service=asset_service)
         session = await service.create_session(SessionCreateRequest(account_id="acc-1", allow_failover=True), auth=ADMIN)
 
         runtime = pool.get_runtime("acc-1")

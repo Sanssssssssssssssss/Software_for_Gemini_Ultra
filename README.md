@@ -108,6 +108,7 @@ For interactive cookie bootstrap without closing your main browser session, use 
 The React frontend is built from [`frontend/`](frontend/) and now owns Login, Setup, Chat, and Admin. Build it with `cd frontend && npm install && npm run build` before launching the FastAPI app so `/ui/login`, `/setup`, `/ui/chat`, and `/admin` all resolve to the new SPA.
 For local HTTP startup, non-production environments such as `development`, `local`, `local-mock`, and `test` intentionally issue a non-`Secure` UI session cookie so browser logins work without HTTPS termination.
 Run `cd frontend && npm run test:e2e` to execute the Playwright browser suite against the mock environment defined in [`config/e2e.mock.env`](config/e2e.mock.env).
+The service now has a multimodal backend contract foundation: uploads land in controlled storage through `POST /v1/uploads`, messages can send either legacy `{message: "..."}` payloads or structured `parts`, and uploaded assets can be inspected through `GET /v1/assets/{asset_id}` and `GET /v1/assets/{asset_id}/content`. Text-only clients remain backward compatible.
 
 ## Documentation
 

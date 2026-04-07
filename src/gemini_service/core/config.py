@@ -43,10 +43,23 @@ class Settings(BaseSettings):
     ui_spa_enabled: bool = True
     frontend_dist_path: str = "frontend/dist"
     metrics_enabled: bool = True
+    asset_storage_backend: str = "local"
+    asset_root_path: str = "data/assets"
+    asset_max_upload_bytes: int = 40 * 1024 * 1024
+    asset_default_ttl_hours: int = 24
+    asset_max_files_per_message: int = 5
+    asset_allowed_mime_types: str = (
+        "image/png,image/jpeg,image/webp,application/pdf,"
+        "application/vnd.openxmlformats-officedocument.presentationml.presentation"
+    )
 
     @property
     def api_token_values(self) -> list[str]:
         return [item.strip() for item in self.api_tokens.split(",") if item.strip()]
+
+    @property
+    def asset_allowed_mime_values(self) -> list[str]:
+        return [item.strip().lower() for item in self.asset_allowed_mime_types.split(",") if item.strip()]
 
 
 @lru_cache

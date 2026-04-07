@@ -3,7 +3,7 @@ from __future__ import annotations
 from pathlib import Path
 from urllib.parse import parse_qs
 
-from fastapi import APIRouter, Depends, Request
+from fastapi import APIRouter, Depends, File, Form, Request, UploadFile
 from fastapi.responses import FileResponse, HTMLResponse, RedirectResponse, StreamingResponse
 from pydantic import BaseModel
 
@@ -14,10 +14,12 @@ from ...core.security import AuthContext
 from ...core.telemetry import TelemetryService
 from ...schemas.common import BootstrapStatusResponse, MessageRequest, SessionCreateRequest
 from ...services.account_pool import AccountPool
+from ...services.asset_service import AssetService
 from ...services.batch_service import BatchService
 from ...services.chat_service import ChatService
 from ..dependencies import (
     get_account_pool,
+    get_asset_service,
     get_batch_service,
     get_chat_service,
     get_telemetry,
@@ -418,6 +420,68 @@ async def ui_stream_message(
         chat_service.stream_message(MessageRequest.model_validate(payload), auth=auth),
         media_type="text/event-stream",
     )
+
+
+@router.post("/ui/api/uploads")
+async def ui_create_upload(
+    file: UploadFile = File(...),
+    temporary: bool = Form(True),
+    auth: AuthContext = Depends(require_ui_user),
+    asset_service: AssetService = Depends(get_asset_service),
+):
+    asset = await asset_service.create_upload(
+        auth=auth,
+        upload=file,
+        temporary=temporary,
+    )
+    return {
+        "asset": {
+            "asset_id": asset.id,
+            "owner_subject": asset.owner_subject,
+            "filename": asset.filename,
+            "mime_type": asset.mime_type,
+            "size_bytes": asset.size_bytes,
+            "sha256": asset.sha256,
+            "status": asset.status,
+            "storage_backend": asset.storage_backend,
+            "provider_ref": asset.provider_ref,
+            "created_at": asset.created_at.isoformat() if asset.created_at else None,
+            "expires_at": asset.expires_at.isoformat() if asset.expires_at else None,
+        }
+    }
+
+
+@router.get("/ui/api/assets/{asset_id}")
+async def ui_get_asset(
+    asset_id: str,
+    auth: AuthContext = Depends(require_ui_user),
+    asset_service: AssetService = Depends(get_asset_service),
+):
+    asset = await asset_service.get_asset_for_read(asset_id=asset_id, auth=auth)
+    return {
+        "asset_id": asset.id,
+        "owner_subject": asset.owner_subject,
+        "filename": asset.filename,
+        "mime_type": asset.mime_type,
+        "size_bytes": asset.size_bytes,
+        "sha256": asset.sha256,
+        "status": asset.status,
+        "storage_backend": asset.storage_backend,
+        "provider_ref": asset.provider_ref,
+        "created_at": asset.created_at.isoformat() if asset.created_at else None,
+        "expires_at": asset.expires_at.isoformat() if asset.expires_at else None,
+    }
+
+
+@router.get("/ui/api/assets/{asset_id}/content")
+async def ui_get_asset_content(
+    asset_id: str,
+    auth: AuthContext = Depends(require_ui_user),
+    asset_service: AssetService = Depends(get_asset_service),
+):
+    asset = await asset_service.get_asset_for_read(asset_id=asset_id, auth=auth)
+    path = asset_service.resolve_asset_path(asset)
+    return FileResponse(path, media_type=asset.mime_type, filename=asset.filename)
 
 
 @router.get("/ui/api/batches/{batch_id}")
