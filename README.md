@@ -58,7 +58,15 @@ py scripts/bootstrap_local.py
 py -m pip install -e .[dev]
 py scripts/doctor.py
 py scripts/validate_service.py
-py -m uvicorn gemini_service.main:app --host 0.0.0.0 --port 8000
+py scripts/run_local.py --env-file .env
+```
+
+Offline local startup without real Gemini cookies:
+
+```sh
+py scripts/bootstrap_local.py --profile mock
+py -m pip install -e .[dev]
+py scripts/run_local.py --mock
 ```
 
 Then:
