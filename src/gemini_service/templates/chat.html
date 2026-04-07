@@ -17,7 +17,7 @@
       display: grid;
       gap: 10px;
     }
-    .session-item, .account-item, .message {
+    .session-item, .account-item, .message, .status-card {
       border: 1px solid var(--line);
       border-radius: 18px;
       padding: 12px 14px;
@@ -28,12 +28,12 @@
     .chat-panel {
       min-height: 70vh;
       display: grid;
-      grid-template-rows: auto 1fr auto;
+      grid-template-rows: auto auto 1fr auto;
       gap: 16px;
     }
     .messages {
       overflow: auto;
-      max-height: 56vh;
+      max-height: 52vh;
       padding-right: 6px;
     }
     .toolbar {
@@ -58,6 +58,13 @@
       gap: 10px;
       align-items: center;
     }
+    .status-card {
+      display: none;
+      border-left: 6px solid var(--danger);
+    }
+    .status-card.visible {
+      display: block;
+    }
     @media (max-width: 980px) {
       .layout { grid-template-columns: 1fr; }
       .chat-panel { min-height: auto; }
@@ -72,9 +79,10 @@
     <div>
       <div class="badge">LAN Chat UI</div>
       <h1>Gemini 对话控制台</h1>
-      <p>在局域网内使用共享 Gemini 账号聊天。会话会绑定到账号并持久化，除非后续阶段定义故障切换规则，否则会尽量保持 sticky routing。</p>
+      <p>在局域网内复用共享 Gemini 账号。会话会绑定到账号并持久化，除非后续阶段定义了故障切换规则，否则会尽量保持 sticky routing。</p>
     </div>
     <div class="mini-nav">
+      <a class="button secondary" href="/setup">初始化检查</a>
       <a class="button secondary" href="/admin">管理员页</a>
       <form method="post" action="/ui/logout">
         <button class="secondary" type="submit">退出 {{ ui_user }}</button>
@@ -93,6 +101,8 @@
             <div class="muted">Gemini：{{ account.account_status or "unknown" }}</div>
             <div class="muted">并发：{{ account.active_requests }}/{{ account.configured_max_concurrency }}</div>
           </div>
+        {% else %}
+          <div class="muted">暂无账号，请先去 <a href="/setup">/setup</a> 检查配置。</div>
         {% endfor %}
       </div>
 
@@ -126,6 +136,8 @@
         </div>
       </div>
 
+      <div class="status-card" id="chat-status"></div>
+
       <div class="messages" id="messages">
         <div class="muted">新建或选择一个会话后开始聊天。</div>
       </div>
@@ -133,7 +145,7 @@
       <div class="composer">
         <label>
           <div style="margin-bottom: 8px;">消息</div>
-          <textarea id="message-input" placeholder="输入你的消息。默认会走流式输出。"></textarea>
+          <textarea id="message-input" placeholder="输入你的消息。默认会使用流式输出。"></textarea>
         </label>
         <div style="display: grid; gap: 10px;">
           <label style="display: flex; align-items: center; gap: 8px;">
@@ -149,108 +161,152 @@
   <script>
     let currentSessionId = null;
 
+    function setStatus(message = '', isError = false) {
+      const card = document.getElementById('chat-status');
+      if (!message) {
+        card.classList.remove('visible');
+        card.textContent = '';
+        return;
+      }
+      card.classList.add('visible');
+      card.style.borderLeftColor = isError ? 'var(--danger)' : 'var(--accent-2)';
+      card.textContent = message;
+    }
+
     function renderMessage(role, content) {
       const messages = document.getElementById('messages');
       const block = document.createElement('div');
       block.className = `message ${role}`;
-      block.innerHTML = `<div><strong>${role === 'user' ? '用户' : 'Gemini'}</strong></div><div style="white-space: pre-wrap; margin-top: 8px;">${content}</div>`;
+      block.innerHTML = `<div><strong>${role === 'user' ? '用户' : 'Gemini'}</strong></div><div style="white-space: pre-wrap; margin-top: 8px;"></div>`;
+      block.querySelector('div:last-child').textContent = content;
       messages.appendChild(block);
       messages.scrollTop = messages.scrollHeight;
       return block;
     }
 
+    async function readJsonResponse(response) {
+      const payload = await response.json().catch(() => null);
+      if (!response.ok) {
+        const message = payload?.error?.message || payload?.detail || `请求失败（HTTP ${response.status}）`;
+        throw new Error(message);
+      }
+      return payload;
+    }
+
     async function createSession() {
-      const accountId = document.getElementById('account-select').value || null;
-      const response = await fetch('/ui/api/sessions', {
-        method: 'POST',
-        headers: {'Content-Type': 'application/json'},
-        body: JSON.stringify({account_id: accountId, routing_policy: 'sticky'})
-      });
-      const session = await response.json();
-      currentSessionId = session.session_id;
-      document.getElementById('session-meta').textContent = `${session.session_id} · ${session.account_id} · ${session.status}`;
-      document.getElementById('messages').innerHTML = '';
-      renderMessage('assistant', '会话已创建，可以开始发送消息。');
-      await refreshBootstrap();
+      try {
+        setStatus('');
+        const accountId = document.getElementById('account-select').value || null;
+        const response = await fetch('/ui/api/sessions', {
+          method: 'POST',
+          headers: {'Content-Type': 'application/json'},
+          body: JSON.stringify({account_id: accountId, routing_policy: 'sticky'})
+        });
+        const session = await readJsonResponse(response);
+        currentSessionId = session.session_id;
+        document.getElementById('session-meta').textContent = `${session.session_id} · ${session.account_id} · ${session.status}`;
+        document.getElementById('messages').innerHTML = '';
+        renderMessage('assistant', '会话已创建，可以开始发送消息。');
+        await refreshBootstrap();
+      } catch (error) {
+        setStatus(error.message, true);
+      }
     }
 
     async function loadSession(sessionId) {
-      currentSessionId = sessionId;
-      const response = await fetch(`/ui/api/sessions/${sessionId}/history`);
-      const history = await response.json();
-      document.getElementById('messages').innerHTML = '';
-      document.getElementById('session-meta').textContent = sessionId;
-      if (!history.items.length) {
-        renderMessage('assistant', '这个会话还没有消息。');
-        return;
+      try {
+        setStatus('');
+        currentSessionId = sessionId;
+        const response = await fetch(`/ui/api/sessions/${sessionId}/history`);
+        const history = await readJsonResponse(response);
+        document.getElementById('messages').innerHTML = '';
+        document.getElementById('session-meta').textContent = sessionId;
+        if (!history.items.length) {
+          renderMessage('assistant', '这个会话还没有消息。');
+          return;
+        }
+        history.items.forEach(item => renderMessage(item.role === 'assistant' ? 'assistant' : 'user', item.content));
+      } catch (error) {
+        setStatus(error.message, true);
       }
-      history.items.forEach(item => renderMessage(item.role === 'assistant' ? 'assistant' : 'user', item.content));
     }
 
     async function sendMessage() {
-      if (!currentSessionId) {
-        await createSession();
-      }
+      try {
+        if (!currentSessionId) {
+          await createSession();
+        }
+        if (!currentSessionId) {
+          return;
+        }
 
-      const input = document.getElementById('message-input');
-      const content = input.value.trim();
-      if (!content) return;
+        setStatus('');
+        const input = document.getElementById('message-input');
+        const content = input.value.trim();
+        if (!content) return;
 
-      input.value = '';
-      renderMessage('user', content);
+        input.value = '';
+        renderMessage('user', content);
 
-      const stream = document.getElementById('stream-toggle').checked;
-      if (!stream) {
-        const response = await fetch('/ui/api/messages', {
+        const stream = document.getElementById('stream-toggle').checked;
+        if (!stream) {
+          const response = await fetch('/ui/api/messages', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({session_id: currentSessionId, message: content, stream: false})
+          });
+          const payload = await readJsonResponse(response);
+          renderMessage('assistant', payload.content);
+          await refreshBootstrap();
+          return;
+        }
+
+        const placeholder = renderMessage('assistant', '');
+        const textNode = placeholder.querySelector('div:last-child');
+        const response = await fetch('/ui/api/messages:stream', {
           method: 'POST',
           headers: {'Content-Type': 'application/json'},
-          body: JSON.stringify({session_id: currentSessionId, message: content, stream: false})
+          body: JSON.stringify({session_id: currentSessionId, message: content, stream: true})
         });
-        const payload = await response.json();
-        renderMessage('assistant', payload.content);
-        return;
-      }
+        if (!response.ok) {
+          throw new Error(`流式请求失败（HTTP ${response.status}）`);
+        }
 
-      const placeholder = renderMessage('assistant', '');
-      const textNode = placeholder.querySelector('div:last-child');
-      const response = await fetch('/ui/api/messages:stream', {
-        method: 'POST',
-        headers: {'Content-Type': 'application/json'},
-        body: JSON.stringify({session_id: currentSessionId, message: content, stream: true})
-      });
+        const reader = response.body.getReader();
+        const decoder = new TextDecoder();
+        let buffer = '';
 
-      const reader = response.body.getReader();
-      const decoder = new TextDecoder();
-      let buffer = '';
-
-      while (true) {
-        const {value, done} = await reader.read();
-        if (done) break;
-        buffer += decoder.decode(value, {stream: true});
-        const events = buffer.split('\n\n');
-        buffer = events.pop();
-        for (const rawEvent of events) {
-          const lines = rawEvent.split('\n');
-          const eventLine = lines.find(line => line.startsWith('event: '));
-          const dataLine = lines.find(line => line.startsWith('data: '));
-          if (!eventLine || !dataLine) continue;
-          const eventName = eventLine.slice(7);
-          const payload = JSON.parse(dataLine.slice(6));
-          if (eventName === 'chunk') {
-            textNode.textContent += payload.text_delta || '';
-          }
-          if (eventName === 'done' && payload.session_id) {
-            currentSessionId = payload.session_id;
-            document.getElementById('session-meta').textContent = `${payload.session_id} · ${payload.account_id}`;
+        while (true) {
+          const {value, done} = await reader.read();
+          if (done) break;
+          buffer += decoder.decode(value, {stream: true});
+          const events = buffer.split('\n\n');
+          buffer = events.pop();
+          for (const rawEvent of events) {
+            const lines = rawEvent.split('\n');
+            const eventLine = lines.find(line => line.startsWith('event: '));
+            const dataLine = lines.find(line => line.startsWith('data: '));
+            if (!eventLine || !dataLine) continue;
+            const eventName = eventLine.slice(7);
+            const payload = JSON.parse(dataLine.slice(6));
+            if (eventName === 'chunk') {
+              textNode.textContent += payload.text_delta || '';
+            }
+            if (eventName === 'done' && payload.session_id) {
+              currentSessionId = payload.session_id;
+              document.getElementById('session-meta').textContent = `${payload.session_id} · ${payload.account_id}`;
+            }
           }
         }
+        await refreshBootstrap();
+      } catch (error) {
+        setStatus(error.message, true);
       }
-      await refreshBootstrap();
     }
 
     async function refreshBootstrap() {
       const response = await fetch('/ui/api/bootstrap');
-      const payload = await response.json();
+      const payload = await readJsonResponse(response);
       const sessionList = document.getElementById('session-list');
       sessionList.innerHTML = '';
       if (!payload.sessions.length) {

@@ -7,13 +7,13 @@
     <div>
       <div class="badge">内部服务入口</div>
       <h1>Gemini 内部共享服务</h1>
-      <p>这是一个基于非官方 Gemini Web 封装构建的内部服务入口。登录后可选择账号、保持对话上下文，并查看账号池状态。</p>
+      <p>这是一个基于非官方 Gemini Web 封装构建的内部服务入口。登录后可以选择账号、保持连续上下文，并查看账号池状态。</p>
     </div>
   </section>
 
   <section class="panel" style="max-width: 460px; margin: 28px auto 0; padding: 28px;">
     <h2 style="margin-top: 0;">UI 登录</h2>
-    <p class="muted">使用内部 UI 凭据进入聊天界面和管理员页面。</p>
+    <p class="muted">使用内部 UI 凭据进入聊天界面和管理员页面。如果这是第一次部署，建议先打开 <a href="/setup">/setup</a> 自检。</p>
     {% if error %}
       <p class="danger" style="margin-top: 16px;">{{ error }}</p>
     {% endif %}

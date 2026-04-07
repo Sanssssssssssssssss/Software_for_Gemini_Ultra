@@ -32,6 +32,21 @@ class ReadinessResponse(BaseModel):
     checks: list[ReadinessCheck]
 
 
+class BootstrapCheck(BaseModel):
+    name: str
+    status: Literal["pass", "warn", "fail"]
+    detail: str
+    action: str | None = None
+
+
+class BootstrapStatusResponse(BaseModel):
+    status: Literal["ready", "needs_setup"]
+    setup_complete: bool
+    checks: list[BootstrapCheck]
+    next_steps: list[str] = Field(default_factory=list)
+    docs: dict[str, str] = Field(default_factory=dict)
+
+
 class AccountSummary(BaseModel):
     account_id: str
     state: str

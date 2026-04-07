@@ -12,6 +12,7 @@ from starlette.middleware.sessions import SessionMiddleware
 from .api.routes.health import router as health_router
 from .api.routes.service import router as service_router
 from .api.routes.ui import router as ui_router
+from .core.bootstrap import evaluate_bootstrap_status
 from .core.config import get_settings
 from .core.errors import ServiceError
 from .core.logging import configure_logging
@@ -104,7 +105,15 @@ def create_app() -> FastAPI:
     app.include_router(ui_router)
 
     @app.get("/", tags=["meta"])
-    async def root() -> RedirectResponse:
-        return RedirectResponse(url="/ui/chat", status_code=307)
+    async def root(request: Request) -> RedirectResponse:
+        bootstrap = evaluate_bootstrap_status(
+            settings,
+            pool=getattr(app.state, "account_pool", None),
+        )
+        if not bootstrap.setup_complete:
+            return RedirectResponse(url="/setup", status_code=307)
+        if request.session.get("ui_user") == settings.ui_username:
+            return RedirectResponse(url="/ui/chat", status_code=307)
+        return RedirectResponse(url="/ui/login", status_code=307)
 
     return app

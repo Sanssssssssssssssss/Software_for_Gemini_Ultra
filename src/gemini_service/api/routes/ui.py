@@ -5,10 +5,10 @@ from urllib.parse import parse_qs
 from fastapi import APIRouter, Depends, Request
 from fastapi.responses import HTMLResponse, RedirectResponse, StreamingResponse
 
+from ...core.bootstrap import evaluate_bootstrap_status
 from ...core.config import get_settings
-from ...core.errors import ServiceError
 from ...core.telemetry import TelemetryService
-from ...schemas.common import MessageRequest, SessionCreateRequest
+from ...schemas.common import BootstrapStatusResponse, MessageRequest, SessionCreateRequest
 from ...services.account_pool import AccountPool
 from ...services.chat_service import ChatService
 from ..dependencies import get_account_pool, get_chat_service, get_telemetry, require_ui_user
@@ -29,6 +29,29 @@ async def login_page(request: Request) -> HTMLResponse:
         "login.html",
         {"request": request, "error": None},
     )
+
+
+@router.get("/setup", response_class=HTMLResponse)
+async def setup_page(
+    request: Request,
+    pool: AccountPool = Depends(get_account_pool),
+) -> HTMLResponse:
+    status = evaluate_bootstrap_status(get_settings(), pool=pool)
+    return _templates(request).TemplateResponse(
+        request,
+        "setup.html",
+        {
+            "request": request,
+            "status": status,
+        },
+    )
+
+
+@router.get("/setup/status", response_model=BootstrapStatusResponse)
+async def setup_status(
+    pool: AccountPool = Depends(get_account_pool),
+) -> BootstrapStatusResponse:
+    return evaluate_bootstrap_status(get_settings(), pool=pool)
 
 
 @router.post("/ui/login", response_class=HTMLResponse)
