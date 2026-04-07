@@ -1,6 +1,6 @@
 {% extends "base.html" %}
 
-{% block title %}管理员页 · Gemini Internal Service{% endblock %}
+{% block title %}Admin | Gemini Internal Service{% endblock %}
 
 {% block head %}
   <style>
@@ -31,13 +31,16 @@
   <section class="hero">
     <div>
       <div class="badge">Admin Visibility</div>
-      <h1>账号池与会话总览</h1>
-      <p>这里展示当前账号运行状态和最近会话，帮助排查不可用账号、冷却状态和 sticky session 绑定情况。</p>
+      <h1>Account Pool and Session Overview</h1>
+      <p>
+        This page provides a read-only view of account runtime state, cooldown status, and
+        recent sessions so operators can quickly identify unhealthy or overloaded accounts.
+      </p>
     </div>
     <div style="display: flex; gap: 10px;">
-      <a class="button secondary" href="/ui/chat">返回聊天</a>
+      <a class="button secondary" href="/ui/chat">Back to Chat</a>
       <form method="post" action="/ui/logout">
-        <button class="secondary" type="submit">退出 {{ ui_user }}</button>
+        <button class="secondary" type="submit">Logout {{ ui_user }}</button>
       </form>
     </div>
   </section>
@@ -46,23 +49,25 @@
     <section class="panel" style="padding: 20px;">
       <div style="display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; margin-bottom: 18px;">
         <div style="padding: 14px; border-radius: 18px; background: rgba(31,111,83,0.09);">
-          <div class="muted">累计请求</div>
+          <div class="muted">Total Requests</div>
           <div style="font-size: 2rem; font-weight: 700;">{{ telemetry.total_requests }}</div>
         </div>
         <div style="padding: 14px; border-radius: 18px; background: rgba(185,61,47,0.08);">
-          <div class="muted">5xx 错误</div>
+          <div class="muted">5xx Errors</div>
           <div style="font-size: 2rem; font-weight: 700;">{{ telemetry.total_errors }}</div>
         </div>
       </div>
-      <h2 style="margin-top: 0;">账号池</h2>
+      <h2 style="margin-top: 0;">Accounts</h2>
       <table class="table">
         <thead>
           <tr>
-            <th>账号</th>
-            <th>运行状态</th>
-            <th>Gemini 状态</th>
-            <th>并发</th>
-            <th>冷却</th>
+            <th>Account</th>
+            <th>Runtime State</th>
+            <th>Gemini State</th>
+            <th>In-Flight</th>
+            <th>Queue</th>
+            <th>Failures</th>
+            <th>Cooldown</th>
           </tr>
         </thead>
         <tbody>
@@ -73,15 +78,26 @@
                 {% if account.last_error %}
                   <div class="danger" style="margin-top: 6px;">{{ account.last_error }}</div>
                 {% endif %}
+                {% if account.state_reason %}
+                  <div class="muted" style="margin-top: 6px;">{{ account.state_reason }}</div>
+                {% endif %}
+                {% if account.recent_errors %}
+                  <div class="muted" style="margin-top: 6px;">
+                    Recent errors:
+                    {{ account.recent_errors|join(" | ") }}
+                  </div>
+                {% endif %}
               </td>
               <td>{{ account.state }}</td>
               <td>{{ account.account_status or "unknown" }}</td>
               <td>{{ account.active_requests }}/{{ account.configured_max_concurrency }}</td>
+              <td>{{ account.queue_depth }}</td>
+              <td>{{ account.failure_count }}</td>
               <td>{{ account.cooldown_until or "-" }}</td>
             </tr>
           {% else %}
             <tr>
-              <td colspan="5" class="muted">暂无账号配置。</td>
+              <td colspan="7" class="muted">No accounts are currently configured.</td>
             </tr>
           {% endfor %}
         </tbody>
@@ -89,13 +105,13 @@
     </section>
 
     <section class="panel" style="padding: 20px;">
-      <h2 style="margin-top: 0;">最近会话</h2>
+      <h2 style="margin-top: 0;">Recent Sessions</h2>
       <table class="table">
         <thead>
           <tr>
-            <th>会话</th>
-            <th>账号</th>
-            <th>状态</th>
+            <th>Session</th>
+            <th>Account</th>
+            <th>Status</th>
           </tr>
         </thead>
         <tbody>
@@ -107,7 +123,7 @@
             </tr>
           {% else %}
             <tr>
-              <td colspan="3" class="muted">暂无会话。</td>
+              <td colspan="3" class="muted">No sessions yet.</td>
             </tr>
           {% endfor %}
         </tbody>

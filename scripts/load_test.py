@@ -29,7 +29,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--stream-ratio", type=float, default=0.3)
     parser.add_argument("--burst-size", type=int, default=3)
     parser.add_argument("--account-id", default=None)
-    parser.add_argument("--message", default="请简短回答：什么是内部 AI 服务？")
+    parser.add_argument("--message", default="Give a short answer: what is an internal AI service?")
     return parser.parse_args()
 
 

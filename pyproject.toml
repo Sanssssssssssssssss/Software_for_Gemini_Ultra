@@ -7,7 +7,7 @@ name = "gemini-webapi"
 authors = [
     {name = "UZQueen"},
 ]
-description = "✨ An elegant async Python wrapper for Google Gemini web app"
+description = "Gemini Web SDK fork with an internal multi-account service shell."
 readme = "README.md"
 license = {file = "LICENSE"}
 keywords = ["API", "async", "Gemini", "Bard", "Google", "Generative AI", "LLM"]
@@ -44,8 +44,8 @@ dev = ["httpx~=0.28.0", "pytest~=8.4.0"]
 gemini-service = "gemini_service.main:run"
 
 [project.urls]
-Repository = "https://github.com/HanaokaYuzu/Gemini-API"
-Issues = "https://github.com/HanaokaYuzu/Gemini-API/issues"
+Repository = "https://github.com/Sanssssssssssssssss/Software_for_Gemini_Ultra"
+Issues = "https://github.com/Sanssssssssssssssss/Software_for_Gemini_Ultra/issues"
 
 [tool.setuptools.packages.find]
 where = ["src"]

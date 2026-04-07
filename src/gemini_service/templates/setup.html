@@ -1,6 +1,6 @@
 {% extends "base.html" %}
 
-{% block title %}首次设置 · Gemini Internal Service{% endblock %}
+{% block title %}Initial Setup | Gemini Internal Service{% endblock %}
 
 {% block head %}
   <style>
@@ -43,28 +43,31 @@
   <section class="hero">
     <div>
       <div class="badge">Setup Guide</div>
-      <h1>Gemini 内部共享服务初始化检查</h1>
-      <p>这个页面会告诉你当前实例是否已经具备最小可运行配置。先补齐失败项，再进入聊天界面，会比一上来直接报错更容易排查。</p>
+      <h1>Initial Setup Checks</h1>
+      <p>
+        This page summarizes the minimum configuration needed to operate the internal service.
+        Finish the failed checks first, then move on to chat and account validation.
+      </p>
     </div>
     <div style="display: flex; gap: 10px; flex-wrap: wrap;">
-      <a class="button secondary" href="/healthz">健康检查</a>
-      <a class="button secondary" href="/readyz">就绪检查</a>
+      <a class="button secondary" href="/healthz">Health</a>
+      <a class="button secondary" href="/readyz">Readiness</a>
       {% if status.setup_complete %}
-        <a class="button" href="/ui/login">进入 UI</a>
+        <a class="button" href="/ui/login">Open UI</a>
       {% endif %}
     </div>
   </section>
 
   <div class="grid">
     <section class="panel panel-body">
-      <h2 style="margin-top: 0;">当前状态</h2>
+      <h2 style="margin-top: 0;">Current Status</h2>
       <div class="check-list">
         {% for check in status.checks %}
           <div class="check-item">
-            <div class="status-{{ check.status }}"><strong>{{ check.status|upper }}</strong> · {{ check.name }}</div>
+            <div class="status-{{ check.status }}"><strong>{{ check.status|upper }}</strong> | {{ check.name }}</div>
             <div style="margin-top: 8px;">{{ check.detail }}</div>
             {% if check.action %}
-              <div class="muted" style="margin-top: 8px;">建议：{{ check.action }}</div>
+              <div class="muted" style="margin-top: 8px;">Action: {{ check.action }}</div>
             {% endif %}
           </div>
         {% endfor %}
@@ -72,28 +75,28 @@
     </section>
 
     <section class="panel panel-body">
-      <h2 style="margin-top: 0;">推荐上手路径</h2>
+      <h2 style="margin-top: 0;">Recommended Onboarding Path</h2>
       <div class="next-steps">
         <div class="step-item">
-          <strong>1. 生成本地配置</strong>
+          <strong>1. Generate local configuration</strong>
           <pre>py scripts/bootstrap_local.py</pre>
         </div>
         <div class="step-item">
-          <strong>2. 填入真实账号 cookies</strong>
+          <strong>2. Fill in real account cookies</strong>
           <pre>config\accounts.json</pre>
         </div>
         <div class="step-item">
-          <strong>3. 运行本地自检</strong>
+          <strong>3. Run local diagnostics</strong>
           <pre>py scripts/doctor.py</pre>
         </div>
         <div class="step-item">
-          <strong>4. 启动服务</strong>
+          <strong>4. Start the service</strong>
           <pre>py -m uvicorn gemini_service.main:app --host 0.0.0.0 --port 8000</pre>
         </div>
       </div>
 
       {% if status.next_steps %}
-        <h3 style="margin-top: 22px;">你现在最需要做的事</h3>
+        <h3 style="margin-top: 22px;">Immediate Next Actions</h3>
         <ul>
           {% for step in status.next_steps %}
             <li>{{ step }}</li>
@@ -101,8 +104,12 @@
         </ul>
       {% endif %}
 
-      <h3>说明</h3>
-      <p class="muted">这个项目依赖非官方 Gemini Web 封装。即使配置完整，也仍可能因为 cookie 失效、风控、页面结构变动而出现临时不可用。</p>
+      <h3>Important Note</h3>
+      <p class="muted">
+        This project depends on a non-official Gemini Web integration. Even with correct
+        configuration, service availability can still be affected by cookie expiry, provider
+        abuse controls, or upstream web changes.
+      </p>
     </section>
   </div>
 {% endblock %}

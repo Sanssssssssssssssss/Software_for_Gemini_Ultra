@@ -35,15 +35,15 @@ def main() -> None:
     settings = get_settings()
     status = evaluate_bootstrap_status(settings)
 
-    print("本地配置检查：")
+    print("Local configuration checks:")
     for check in status.checks:
         prefix = {"pass": "[PASS]", "warn": "[WARN]", "fail": "[FAIL]"}[check.status]
         print(f"{prefix} {check.name}: {check.detail}")
         if check.action:
-            print(f"       建议：{check.action}")
+            print(f"       Action: {check.action}")
 
     if args.base_url:
-        print("\n在线服务检查：")
+        print("\nOnline service checks:")
         base_url = args.base_url.rstrip("/")
         for path in ("/healthz", "/readyz", "/setup/status"):
             try:
@@ -66,9 +66,9 @@ def main() -> None:
                 print(f"[PASS] /v1/accounts: {json.dumps(payload, ensure_ascii=False)}")
 
     if status.setup_complete:
-        print("\n结论：结构化配置已经基本齐全，可以进入服务启动和账号可用性验证。")
+        print("\nConclusion: configuration is present and the service is ready for runtime validation.")
     else:
-        print("\n结论：当前还不适合直接交给用户使用，请先补齐失败项。")
+        print("\nConclusion: do not hand this service to users yet; fix the failed setup items first.")
 
 
 if __name__ == "__main__":

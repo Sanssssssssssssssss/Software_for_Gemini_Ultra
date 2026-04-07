@@ -46,20 +46,20 @@ def main() -> None:
     else:
         skipped.append(str(ACCOUNTS_TARGET.relative_to(REPO_ROOT)))
 
-    print("本地初始化完成。")
+    print("Local bootstrap completed.")
     if created:
-        print("已生成：")
+        print("Created:")
         for item in created:
             print(f"  - {item}")
     if skipped:
-        print("已跳过（文件已存在）：")
+        print("Skipped because the file already exists:")
         for item in skipped:
             print(f"  - {item}")
 
-    print("\n下一步：")
-    print("1. 编辑 config/accounts.json，填入真实的 Gemini cookies。")
-    print("2. 运行 `py scripts/doctor.py` 做本地自检。")
-    print("3. 启动服务：`py -m uvicorn gemini_service.main:app --host 0.0.0.0 --port 8000`")
+    print("\nNext steps:")
+    print("1. Edit config/accounts.json and replace the placeholder Gemini cookies.")
+    print("2. Run `py scripts/doctor.py` to validate local configuration.")
+    print("3. Start the service with `py -m uvicorn gemini_service.main:app --host 0.0.0.0 --port 8000`.")
 
 
 if __name__ == "__main__":

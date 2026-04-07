@@ -1,6 +1,6 @@
 {% extends "base.html" %}
 
-{% block title %}聊天 · Gemini Internal Service{% endblock %}
+{% block title %}Chat | Gemini Internal Service{% endblock %}
 
 {% block head %}
   <style>
@@ -78,43 +78,47 @@
   <section class="hero">
     <div>
       <div class="badge">LAN Chat UI</div>
-      <h1>Gemini 对话控制台</h1>
-      <p>在局域网内复用共享 Gemini 账号。会话会绑定到账号并持久化，除非后续阶段定义了故障切换规则，否则会尽量保持 sticky routing。</p>
+      <h1>Gemini Conversation Console</h1>
+      <p>
+        Reuse shared Gemini web accounts inside the LAN. Sessions stay bound to a single
+        account and remain persisted, so operators can inspect routing and health when an
+        account becomes unavailable.
+      </p>
     </div>
     <div class="mini-nav">
-      <a class="button secondary" href="/setup">初始化检查</a>
-      <a class="button secondary" href="/admin">管理员页</a>
+      <a class="button secondary" href="/setup">Setup Checks</a>
+      <a class="button secondary" href="/admin">Admin</a>
       <form method="post" action="/ui/logout">
-        <button class="secondary" type="submit">退出 {{ ui_user }}</button>
+        <button class="secondary" type="submit">Logout {{ ui_user }}</button>
       </form>
     </div>
   </section>
 
   <div class="layout">
     <aside class="panel sidebar">
-      <h3 style="margin-top: 0;">账号池</h3>
+      <h3 style="margin-top: 0;">Accounts</h3>
       <div class="account-list" id="account-list">
         {% for account in accounts %}
           <div class="account-item">
             <strong>{{ account.account_id }}</strong>
-            <div class="muted">状态：{{ account.state }}</div>
-            <div class="muted">Gemini：{{ account.account_status or "unknown" }}</div>
-            <div class="muted">并发：{{ account.active_requests }}/{{ account.configured_max_concurrency }}</div>
+            <div class="muted">State: {{ account.state }}</div>
+            <div class="muted">Gemini: {{ account.account_status or "unknown" }}</div>
+            <div class="muted">In-flight: {{ account.active_requests }}/{{ account.configured_max_concurrency }}</div>
           </div>
         {% else %}
-          <div class="muted">暂无账号，请先去 <a href="/setup">/setup</a> 检查配置。</div>
+          <div class="muted">No accounts are configured yet. Visit <a href="/setup">/setup</a> first.</div>
         {% endfor %}
       </div>
 
-      <h3 style="margin-top: 24px;">最近会话</h3>
+      <h3 style="margin-top: 24px;">Recent Sessions</h3>
       <div class="session-list" id="session-list">
         {% for session in sessions %}
           <button class="session-item secondary" type="button" onclick="loadSession('{{ session.session_id }}')">
             <div><strong>{{ session.session_id[:8] }}</strong></div>
-            <div class="muted">{{ session.account_id }} · {{ session.status }}</div>
+            <div class="muted">{{ session.account_id }} | {{ session.status }}</div>
           </button>
         {% else %}
-          <div class="muted">还没有会话。</div>
+          <div class="muted">No sessions yet.</div>
         {% endfor %}
       </div>
     </aside>
@@ -122,37 +126,37 @@
     <section class="panel chat-panel">
       <div class="toolbar">
         <div>
-          <h2 style="margin: 0;">当前会话</h2>
-          <div class="muted" id="session-meta">未选择会话</div>
+          <h2 style="margin: 0;">Current Session</h2>
+          <div class="muted" id="session-meta">No session selected</div>
         </div>
         <div style="display: flex; gap: 10px; min-width: 320px;">
           <select id="account-select">
-            <option value="">自动选择可用账号</option>
+            <option value="">Automatically route to a healthy account</option>
             {% for account in accounts %}
-              <option value="{{ account.account_id }}">{{ account.account_id }} · {{ account.state }}</option>
+              <option value="{{ account.account_id }}">{{ account.account_id }} | {{ account.state }}</option>
             {% endfor %}
           </select>
-          <button class="warn" type="button" onclick="createSession()">新建会话</button>
+          <button class="warn" type="button" onclick="createSession()">New Session</button>
         </div>
       </div>
 
       <div class="status-card" id="chat-status"></div>
 
       <div class="messages" id="messages">
-        <div class="muted">新建或选择一个会话后开始聊天。</div>
+        <div class="muted">Create or select a session to start chatting.</div>
       </div>
 
       <div class="composer">
         <label>
-          <div style="margin-bottom: 8px;">消息</div>
-          <textarea id="message-input" placeholder="输入你的消息。默认会使用流式输出。"></textarea>
+          <div style="margin-bottom: 8px;">Message</div>
+          <textarea id="message-input" placeholder="Type your message here. Streaming is enabled by default."></textarea>
         </label>
         <div style="display: grid; gap: 10px;">
           <label style="display: flex; align-items: center; gap: 8px;">
             <input id="stream-toggle" type="checkbox" checked style="width: auto;" />
-            <span>流式输出</span>
+            <span>Stream output</span>
           </label>
-          <button type="button" onclick="sendMessage()">发送</button>
+          <button type="button" onclick="sendMessage()">Send</button>
         </div>
       </div>
     </section>
@@ -177,7 +181,7 @@
       const messages = document.getElementById('messages');
       const block = document.createElement('div');
       block.className = `message ${role}`;
-      block.innerHTML = `<div><strong>${role === 'user' ? '用户' : 'Gemini'}</strong></div><div style="white-space: pre-wrap; margin-top: 8px;"></div>`;
+      block.innerHTML = `<div><strong>${role === 'user' ? 'User' : 'Gemini'}</strong></div><div style="white-space: pre-wrap; margin-top: 8px;"></div>`;
       block.querySelector('div:last-child').textContent = content;
       messages.appendChild(block);
       messages.scrollTop = messages.scrollHeight;
@@ -187,7 +191,7 @@
     async function readJsonResponse(response) {
       const payload = await response.json().catch(() => null);
       if (!response.ok) {
-        const message = payload?.error?.message || payload?.detail || `请求失败（HTTP ${response.status}）`;
+        const message = payload?.error?.message || payload?.detail || `Request failed (HTTP ${response.status})`;
         throw new Error(message);
       }
       return payload;
@@ -204,9 +208,9 @@
         });
         const session = await readJsonResponse(response);
         currentSessionId = session.session_id;
-        document.getElementById('session-meta').textContent = `${session.session_id} · ${session.account_id} · ${session.status}`;
+        document.getElementById('session-meta').textContent = `${session.session_id} | ${session.account_id} | ${session.status}`;
         document.getElementById('messages').innerHTML = '';
-        renderMessage('assistant', '会话已创建，可以开始发送消息。');
+        renderMessage('assistant', 'Session created. You can send your next message now.');
         await refreshBootstrap();
       } catch (error) {
         setStatus(error.message, true);
@@ -222,7 +226,7 @@
         document.getElementById('messages').innerHTML = '';
         document.getElementById('session-meta').textContent = sessionId;
         if (!history.items.length) {
-          renderMessage('assistant', '这个会话还没有消息。');
+          renderMessage('assistant', 'This session has no messages yet.');
           return;
         }
         history.items.forEach(item => renderMessage(item.role === 'assistant' ? 'assistant' : 'user', item.content));
@@ -269,7 +273,7 @@
           body: JSON.stringify({session_id: currentSessionId, message: content, stream: true})
         });
         if (!response.ok) {
-          throw new Error(`流式请求失败（HTTP ${response.status}）`);
+          throw new Error(`Streaming request failed (HTTP ${response.status})`);
         }
 
         const reader = response.body.getReader();
@@ -294,7 +298,7 @@
             }
             if (eventName === 'done' && payload.session_id) {
               currentSessionId = payload.session_id;
-              document.getElementById('session-meta').textContent = `${payload.session_id} · ${payload.account_id}`;
+              document.getElementById('session-meta').textContent = `${payload.session_id} | ${payload.account_id}`;
             }
           }
         }
@@ -310,14 +314,14 @@
       const sessionList = document.getElementById('session-list');
       sessionList.innerHTML = '';
       if (!payload.sessions.length) {
-        sessionList.innerHTML = '<div class="muted">还没有会话。</div>';
+        sessionList.innerHTML = '<div class="muted">No sessions yet.</div>';
       } else {
         payload.sessions.forEach(session => {
           const button = document.createElement('button');
           button.type = 'button';
           button.className = 'session-item secondary';
           button.onclick = () => loadSession(session.session_id);
-          button.innerHTML = `<div><strong>${session.session_id.slice(0, 8)}</strong></div><div class="muted">${session.account_id} · ${session.status}</div>`;
+          button.innerHTML = `<div><strong>${session.session_id.slice(0, 8)}</strong></div><div class="muted">${session.account_id} | ${session.status}</div>`;
           sessionList.appendChild(button);
         });
       }

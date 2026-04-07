@@ -3,15 +3,23 @@ from __future__ import annotations
 import logging
 import time
 import uuid
+from contextvars import ContextVar
 
 from fastapi import Request
 from starlette.middleware.base import BaseHTTPMiddleware
+
+_request_id_var: ContextVar[str | None] = ContextVar("gemini_service_request_id", default=None)
+
+
+def get_request_id() -> str | None:
+    return _request_id_var.get()
 
 
 class RequestContextMiddleware(BaseHTTPMiddleware):
     async def dispatch(self, request: Request, call_next):
         request_id = request.headers.get("x-request-id") or str(uuid.uuid4())
         request.state.request_id = request_id
+        reset_token = _request_id_var.set(request_id)
 
         telemetry = request.app.state.telemetry
         telemetry.request_started()
@@ -40,6 +48,7 @@ class RequestContextMiddleware(BaseHTTPMiddleware):
                     "duration_ms": round(duration * 1000, 2),
                 },
             )
+            _request_id_var.reset(reset_token)
             raise
 
         duration = time.perf_counter() - started
@@ -61,4 +70,5 @@ class RequestContextMiddleware(BaseHTTPMiddleware):
                 "duration_ms": round(duration * 1000, 2),
             },
         )
+        _request_id_var.reset(reset_token)
         return response

@@ -71,7 +71,7 @@ async def login_submit(
         "login.html",
         {
             "request": request,
-            "error": "用户名或密码错误。",
+            "error": "Invalid username or password.",
         },
         status_code=401,
     )

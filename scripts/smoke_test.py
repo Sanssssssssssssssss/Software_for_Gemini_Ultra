@@ -12,7 +12,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--base-url", required=True, help="Service base URL, for example http://127.0.0.1:8000")
     parser.add_argument("--token", required=True, help="Bearer token configured in GEMINI_SERVICE_API_TOKENS")
     parser.add_argument("--account-id", default=None, help="Optional preferred account id for session creation")
-    parser.add_argument("--message", default="请用一句话介绍你自己。", help="Smoke test prompt")
+    parser.add_argument("--message", default="Please introduce yourself in one sentence.", help="Smoke test prompt")
     return parser.parse_args()
 
 

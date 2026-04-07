@@ -1,22 +1,7 @@
 from __future__ import annotations
 
-from contextlib import contextmanager
-
-from fastapi.testclient import TestClient
-
-from gemini_service.app import create_app
 from gemini_service.core.bootstrap import evaluate_bootstrap_status
-from gemini_service.core.config import Settings, get_settings
-
-
-@contextmanager
-def _client(monkeypatch, tmp_path, **env):
-    monkeypatch.chdir(tmp_path)
-    for key, value in env.items():
-        monkeypatch.setenv(key, value)
-    get_settings.cache_clear()
-    with TestClient(create_app()) as client:
-        yield client
+from gemini_service.core.config import Settings
 
 
 def test_bootstrap_status_detects_placeholder_configuration(tmp_path, monkeypatch):
@@ -41,16 +26,10 @@ def test_bootstrap_status_detects_placeholder_configuration(tmp_path, monkeypatc
     assert any(check.name == "accounts_credentials" and check.status == "fail" for check in status.checks)
 
 
-def test_root_redirects_to_setup_when_bootstrap_incomplete(monkeypatch, tmp_path):
-    accounts = tmp_path / "accounts.json"
-    accounts.write_text('{"accounts":[]}', encoding="utf-8")
-
-    with _client(
-        monkeypatch,
-        tmp_path,
+def test_root_redirects_to_setup_when_bootstrap_incomplete(client_factory):
+    with client_factory(
         GEMINI_SERVICE_REQUIRE_AUTH="true",
         GEMINI_SERVICE_API_TOKENS="change-me",
-        GEMINI_SERVICE_ACCOUNTS_CONFIG_PATH=str(accounts),
         GEMINI_SERVICE_UI_PASSWORD="change-me-ui-password",
         GEMINI_SERVICE_UI_SESSION_SECRET="change-me-session-secret",
     ) as client:
@@ -59,15 +38,9 @@ def test_root_redirects_to_setup_when_bootstrap_incomplete(monkeypatch, tmp_path
         assert response.headers["location"] == "/setup"
 
 
-def test_setup_status_endpoint_returns_bootstrap_report(monkeypatch, tmp_path):
-    accounts = tmp_path / "accounts.json"
-    accounts.write_text('{"accounts":[]}', encoding="utf-8")
-
-    with _client(
-        monkeypatch,
-        tmp_path,
+def test_setup_status_endpoint_returns_bootstrap_report(client_factory):
+    with client_factory(
         GEMINI_SERVICE_REQUIRE_AUTH="false",
-        GEMINI_SERVICE_ACCOUNTS_CONFIG_PATH=str(accounts),
     ) as client:
         response = client.get("/setup/status")
         assert response.status_code == 200
