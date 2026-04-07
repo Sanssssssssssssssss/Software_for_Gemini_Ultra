@@ -141,6 +141,7 @@ async def admin_page(
         total_accounts=pool.inventory_count,
         sessions=len(sessions),
         messages=await chat_service.repository.count_messages(),
+        batches=await chat_service.repository.count_batches(),
     )
     telemetry.update_account_pool(await pool.list_account_summaries(force_refresh=True))
     return _templates(request).TemplateResponse(
@@ -163,6 +164,7 @@ async def admin_account_action(
     action: str,
     _: AuthContext = Depends(require_ui_admin),
     pool: AccountPool = Depends(get_account_pool),
+    telemetry: TelemetryService = Depends(get_telemetry),
 ) -> RedirectResponse:
     if action == "clear-cooldown":
         await pool.clear_cooldown(account_id)
@@ -174,6 +176,7 @@ async def admin_account_action(
         await pool.enable_runtime(account_id)
     elif action == "refresh":
         await pool.refresh_account(account_id)
+    telemetry.record_admin_action(action, "success")
     return RedirectResponse(url="/admin", status_code=303)
 
 

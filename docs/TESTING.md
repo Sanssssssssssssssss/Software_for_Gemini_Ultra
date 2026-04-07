@@ -42,6 +42,22 @@ The smoke script verifies:
 - non-streaming message send
 - session history retrieval
 
+## Closed-loop validation
+
+Use the validation orchestrator to boot the service against mock provider accounts, then run:
+
+- health and readiness checks
+- user/admin permission checks
+- message send and batch execution
+- admin runtime actions
+- load matrix validation at multiple concurrency levels
+
+```sh
+py scripts/validate_service.py
+```
+
+The validator uses [config/accounts.mock.json](../config/accounts.mock.json) by default and does not require real Gemini cookies.
+
 ## Load test
 
 Use the async load harness to exercise concurrent sessions and a mix of
@@ -58,6 +74,8 @@ Key knobs:
 - `--stream-ratio`: share of requests that use `/v1/messages:stream`
 - `--burst-size`: requests each worker sends before a short pause
 - `--account-id`: pin all new sessions to a specific account
+- `--session-mode`: `reuse`, `new`, or `mixed`
+- `--new-session-ratio`: when using `mixed`, how often a worker opens a fresh session
 
 Recommended validation flow:
 

@@ -33,6 +33,16 @@ class ChatRepository:
         if self.engine is not None:
             await self.engine.dispose()
 
+    async def ping(self) -> bool:
+        if self.engine is None:
+            return False
+        try:
+            async with self.engine.connect() as connection:
+                await connection.execute(select(1))
+            return True
+        except Exception:
+            return False
+
     async def create_session(
         self,
         owner_subject: str,
@@ -157,6 +167,19 @@ class ChatRepository:
         async with self._session() as db:
             result = await db.execute(select(MessageRecord))
             return len(list(result.scalars()))
+
+    async def count_batches(self) -> int:
+        async with self._session() as db:
+            result = await db.execute(select(BatchRecord))
+            return len(list(result.scalars()))
+
+    async def count_batches_by_status(self) -> dict[str, int]:
+        async with self._session() as db:
+            result = await db.execute(select(BatchRecord))
+            counts: dict[str, int] = {}
+            for record in result.scalars():
+                counts[record.status] = counts.get(record.status, 0) + 1
+            return counts
 
     async def get_cached_assistant_message(
         self,

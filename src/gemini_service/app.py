@@ -93,6 +93,7 @@ def create_app() -> FastAPI:
 
     @app.exception_handler(ServiceError)
     async def handle_service_error(request: Request, exc: ServiceError):
+        app.state.telemetry.record_service_error(exc.code)
         if (
             exc.code == "ui_not_authenticated"
             and request.url.path.startswith(("/ui", "/admin"))

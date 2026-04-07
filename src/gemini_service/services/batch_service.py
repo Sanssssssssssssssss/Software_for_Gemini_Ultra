@@ -18,6 +18,14 @@ class BatchService:
         self.logger = logging.getLogger("gemini_service.batch")
         self._tasks: dict[str, asyncio.Task] = {}
 
+    @property
+    def is_available(self) -> bool:
+        return self.repository.session_factory is not None
+
+    @property
+    def active_task_count(self) -> int:
+        return sum(not task.done() for task in self._tasks.values())
+
     async def start(self) -> None:
         for batch in await self.repository.list_resumable_batches():
             self._schedule_batch(batch.id)

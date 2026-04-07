@@ -266,6 +266,8 @@ class ChatService:
                 "reason": selection.reason or "",
             },
         )
+        if self.telemetry is not None:
+            self.telemetry.record_session_failover()
         return selection, updated or record
 
     async def _maybe_get_cached_response(

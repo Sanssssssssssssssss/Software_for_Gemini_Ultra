@@ -1,0 +1,44 @@
+{
+  "accounts": [
+    {
+      "account_id": "mock-ready-1",
+      "provider_backend": "mock",
+      "mock_behavior": "healthy",
+      "mock_delay_ms": 20,
+      "mock_models": ["gemini-3-pro", "gemini-3-flash"],
+      "enabled": true,
+      "secure_1psid": "mock-cookie",
+      "secure_1psidts": "mock-cookie-ts",
+      "max_concurrency": 2,
+      "cooldown_seconds": 10,
+      "request_timeout_seconds": 30,
+      "tags": ["mock", "ready"]
+    },
+    {
+      "account_id": "mock-flaky-1",
+      "provider_backend": "mock",
+      "mock_behavior": "flaky",
+      "mock_delay_ms": 40,
+      "mock_models": ["gemini-3-pro"],
+      "enabled": true,
+      "secure_1psid": "mock-cookie",
+      "secure_1psidts": "mock-cookie-ts",
+      "max_concurrency": 1,
+      "cooldown_seconds": 10,
+      "request_timeout_seconds": 30,
+      "tags": ["mock", "flaky"]
+    },
+    {
+      "account_id": "mock-reauth-1",
+      "provider_backend": "mock",
+      "mock_behavior": "reauth",
+      "enabled": true,
+      "secure_1psid": "mock-cookie",
+      "secure_1psidts": "mock-cookie-ts",
+      "max_concurrency": 1,
+      "cooldown_seconds": 10,
+      "request_timeout_seconds": 30,
+      "tags": ["mock", "reauth"]
+    }
+  ]
+}

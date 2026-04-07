@@ -49,6 +49,16 @@ Then verify:
 - `/admin` shows account pool state after login
 - `scripts/smoke_test.py` passes against the deployed service
 
+## Pre-production offline verification
+
+Before using a real Gemini account inventory, validate the service layer itself with mock accounts:
+
+```sh
+py scripts/validate_service.py
+```
+
+This exercises the real FastAPI app, scheduler, batch worker, auth boundaries, and metrics without requiring live Gemini cookies. Do not use mock accounts in production.
+
 ## Notes
 
 - SQLite remains supported for local development, but PostgreSQL is the intended deployment database.

@@ -49,6 +49,7 @@ The internal service lives in `src/gemini_service`. The current implementation a
 - sticky sessions with opt-in failover and persisted failover events
 - persisted batch execution with background recovery on restart
 - user-owned sessions and batches with admin/user permission boundaries
+- mock provider validation mode for offline end-to-end verification
 
 Recommended first-run flow:
 
@@ -56,6 +57,7 @@ Recommended first-run flow:
 py scripts/bootstrap_local.py
 py -m pip install -e .[dev]
 py scripts/doctor.py
+py scripts/validate_service.py
 py -m uvicorn gemini_service.main:app --host 0.0.0.0 --port 8000
 ```
 
@@ -89,6 +91,7 @@ Useful endpoints:
 UI authentication uses admin credentials from `GEMINI_SERVICE_UI_USERNAME` / `GEMINI_SERVICE_UI_PASSWORD` and can optionally enable a standard user login with `GEMINI_SERVICE_UI_USER_USERNAME` / `GEMINI_SERVICE_UI_USER_PASSWORD`.
 API authentication uses `GEMINI_SERVICE_API_TOKENS`. Plain tokens remain backward compatible and are treated as admin tokens. Structured tokens use `subject|token|role`, for example `alice|token-1|user,bob|token-2|admin`.
 The current chat UI defaults standard users to automatic routing. Manual account pinning is only exposed to administrators for debugging and recovery work.
+For offline validation without real Gemini cookies, use [config/accounts.mock.json](config/accounts.mock.json) together with `py scripts/validate_service.py`.
 
 ## Documentation
 

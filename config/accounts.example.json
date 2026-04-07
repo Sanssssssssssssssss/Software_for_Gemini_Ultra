@@ -2,6 +2,7 @@
   "accounts": [
     {
       "account_id": "primary-ultra-1",
+      "provider_backend": "gemini_web",
       "enabled": true,
       "secure_1psid": "replace-me",
       "secure_1psidts": "replace-me-if-required",

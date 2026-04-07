@@ -23,6 +23,7 @@ def test_readyz_reports_missing_accounts_config(client_factory):
 
         assert response.status_code == 503
         assert response.json()["status"] == "not_ready"
+        assert {check["name"] for check in response.json()["checks"]} >= {"database", "batch_worker"}
 
 
 def test_accounts_requires_bearer_token(client_factory):
@@ -75,3 +76,5 @@ def test_metrics_endpoint_exposes_prometheus_text(client_factory):
         assert "gemini_service_http_requests_total" in response.text
         assert "gemini_service_account_states" in response.text
         assert "gemini_service_provider_calls_total" in response.text
+        assert "gemini_service_batch_status" in response.text
+        assert "gemini_service_service_errors_total" in response.text

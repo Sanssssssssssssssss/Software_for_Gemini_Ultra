@@ -23,9 +23,11 @@ from ..dependencies import (
     get_account_pool,
     get_batch_service,
     get_chat_service,
+    get_telemetry,
     require_admin_api_token,
     require_api_token,
 )
+from ...core.telemetry import TelemetryService
 
 router = APIRouter()
 
@@ -125,6 +127,7 @@ async def admin_account_action(
     action: str,
     _: AuthContext = Depends(require_admin_api_token),
     pool: AccountPool = Depends(get_account_pool),
+    telemetry: TelemetryService = Depends(get_telemetry),
 ) -> AdminActionResponse:
     if action == "clear-cooldown":
         runtime = await pool.clear_cooldown(account_id)
@@ -142,11 +145,13 @@ async def admin_account_action(
         runtime = await pool.refresh_account(account_id)
         detail = "Account refreshed."
     else:
+        telemetry.record_admin_action(action, "unknown")
         raise ServiceError(
             status_code=404,
             code="admin_action_not_found",
             message=f"Unknown account action: {action}",
         )
+    telemetry.record_admin_action(action, "success")
 
     return AdminActionResponse(
         account_id=runtime.config.account_id,

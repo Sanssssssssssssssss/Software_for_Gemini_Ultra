@@ -16,6 +16,7 @@ class Stats:
     total_requests: int = 0
     stream_requests: int = 0
     non_stream_requests: int = 0
+    new_sessions: int = 0
     errors: int = 0
     latencies_ms: list[float] = field(default_factory=list)
 
@@ -29,6 +30,8 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--stream-ratio", type=float, default=0.3)
     parser.add_argument("--burst-size", type=int, default=3)
     parser.add_argument("--account-id", default=None)
+    parser.add_argument("--session-mode", choices=["reuse", "new", "mixed"], default="reuse")
+    parser.add_argument("--new-session-ratio", type=float, default=0.3)
     parser.add_argument("--message", default="Give a short answer: what is an internal AI service?")
     return parser.parse_args()
 
@@ -61,6 +64,23 @@ async def send_stream(client: httpx.AsyncClient, session_id: str, message: str) 
             pass
 
 
+async def choose_session(
+    client: httpx.AsyncClient,
+    args: argparse.Namespace,
+    current_session_id: str | None,
+    stats: Stats,
+) -> str:
+    if args.session_mode == "reuse" and current_session_id:
+        return current_session_id
+    if args.session_mode == "new":
+        stats.new_sessions += 1
+        return await create_session(client, args.account_id)
+    if current_session_id is None or random.random() < args.new_session_ratio:
+        stats.new_sessions += 1
+        return await create_session(client, args.account_id)
+    return current_session_id
+
+
 async def worker(
     worker_id: int,
     client: httpx.AsyncClient,
@@ -68,13 +88,14 @@ async def worker(
     deadline: float,
     stats: Stats,
 ) -> None:
-    session_id = await create_session(client, args.account_id)
+    session_id: str | None = None
     while time.perf_counter() < deadline:
         for _ in range(args.burst_size):
             if time.perf_counter() >= deadline:
                 break
             started = time.perf_counter()
             try:
+                session_id = await choose_session(client, args, session_id, stats)
                 if random.random() < args.stream_ratio:
                     stats.stream_requests += 1
                     await send_stream(client, session_id, f"[worker {worker_id}] {args.message}")
@@ -103,6 +124,8 @@ async def main_async(args: argparse.Namespace) -> int:
     summary = {
         "workers": args.workers,
         "duration_seconds": args.duration_seconds,
+        "session_mode": args.session_mode,
+        "new_sessions": stats.new_sessions,
         "total_requests": stats.total_requests,
         "stream_requests": stats.stream_requests,
         "non_stream_requests": stats.non_stream_requests,

@@ -15,6 +15,7 @@ from gemini_webapi.exceptions import APIError, AuthError, TemporarilyBlocked, Ti
 
 from ..adapters.base import AccountAdapter, AccountProbeResult
 from ..adapters.gemini_web import GeminiWebAccountAdapter
+from ..adapters.mock import MockAccountAdapter
 from ..core.config import Settings
 from ..core.errors import ServiceError
 from ..schemas.accounts import AccountConfig, AccountInventory
@@ -127,7 +128,7 @@ class AccountPool:
         adapter_factory: Callable[[AccountConfig], AccountAdapter] | None = None,
     ):
         self.settings = settings
-        self.adapter_factory = adapter_factory or GeminiWebAccountAdapter
+        self.adapter_factory = adapter_factory
         self._runtimes: dict[str, AccountRuntime] = {}
         self._refresh_lock = asyncio.Lock()
         self._condition = asyncio.Condition()
@@ -339,7 +340,7 @@ class AccountPool:
         for account in inventory.accounts:
             runtime = AccountRuntime(
                 config=account,
-                adapter=self.adapter_factory(account),
+                adapter=self._build_adapter(account),
             )
             if not account.enabled:
                 runtime.state = AccountRuntimeState.DISABLED
@@ -607,3 +608,10 @@ class AccountPool:
             )
         elif runtime.last_transition_at is None:
             runtime.last_transition_at = now
+
+    def _build_adapter(self, config: AccountConfig) -> AccountAdapter:
+        if self.adapter_factory is not None:
+            return self.adapter_factory(config)
+        if config.provider_backend == "mock":
+            return MockAccountAdapter(config)
+        return GeminiWebAccountAdapter(config)

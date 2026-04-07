@@ -23,3 +23,7 @@ If burst load exceeds configured concurrency, latency rises and more accounts ma
 ## Mixed stream and non-stream traffic
 
 Streaming requests occupy account capacity longer than short non-stream calls. Use load testing to tune ratios and per-account concurrency.
+
+## Validation blind spots
+
+Mock-provider validation proves the service shell, scheduler, batch worker, and auth boundaries, but it cannot prove real Gemini cookie health, anti-abuse posture, or upstream web compatibility. Treat `scripts/validate_service.py` and real-account smoke tests as complementary gates.
