@@ -31,23 +31,7 @@ function trimPreview(text: string, maxLength = 96) {
   if (singleLine.length <= maxLength) {
     return singleLine;
   }
-  return `${singleLine.slice(0, maxLength - 1)}…`;
-}
-
-function formatTimestamp(value: string | null | undefined) {
-  if (!value) {
-    return "";
-  }
-  const date = new Date(value);
-  if (Number.isNaN(date.getTime())) {
-    return value;
-  }
-  return date.toLocaleString("zh-CN", {
-    month: "short",
-    day: "numeric",
-    hour: "2-digit",
-    minute: "2-digit",
-  });
+  return `${singleLine.slice(0, maxLength - 3)}...`;
 }
 
 function buildSessionPreview(messages: UiMessage[], fallback: string): SessionPreview {
@@ -160,11 +144,7 @@ export function ChatPage() {
     navigate("/ui/login", { replace: true });
   }
 
-  async function loadHistory(
-    sessionId: string,
-    session?: SessionSummary,
-    cancelled = false,
-  ) {
+  async function loadHistory(sessionId: string, session?: SessionSummary, cancelled = false) {
     setLoadingHistory(true);
     setChatStatus(null);
     try {
@@ -179,7 +159,10 @@ export function ChatPage() {
       }));
       setSessionPreviews((current) => ({
         ...current,
-        [sessionId]: buildSessionPreview(mappedMessages, session ? session.session_id.slice(0, 8) : sessionId.slice(0, 8)),
+        [sessionId]: buildSessionPreview(
+          mappedMessages,
+          session ? session.session_id.slice(0, 8) : sessionId.slice(0, 8),
+        ),
       }));
     } catch (error) {
       if (!cancelled) {
@@ -384,7 +367,7 @@ export function ChatPage() {
         if (event.type === "accepted") {
           setChatStatus({
             tone: "info",
-            message: `Request accepted on ${event.payload.account_id}. Waiting for first token…`,
+            message: `Request accepted on ${event.payload.account_id}. Waiting for first token...`,
           });
           patchSessionList(
             {
@@ -513,7 +496,7 @@ export function ChatPage() {
         <section className="hero-card">
           <div className="hero-copy">
             <span className="eyebrow">Workspace Bootstrap</span>
-            <h1>Loading the modern chat workspace…</h1>
+            <h1>Loading the modern chat workspace...</h1>
             <p>The frontend is hydrating the routed session rail and chat context.</p>
           </div>
         </section>
@@ -570,7 +553,7 @@ export function ChatPage() {
               <h2>{selectedSession ? selectedSession.session_id : "Ready when you are"}</h2>
               <p className="body-muted">
                 {selectedSession
-                  ? `Sticky account: ${selectedSession.account_id} · ${selectedSession.status}`
+                  ? `Sticky account: ${selectedSession.account_id} - ${selectedSession.status}`
                   : "Start a new conversation or pick one from the rail."}
               </p>
             </div>
@@ -583,7 +566,7 @@ export function ChatPage() {
                       <option value="">Auto-route to a healthy account</option>
                       {accounts.map((account) => (
                         <option key={account.account_id} value={account.account_id}>
-                          {account.account_id} · {account.state}
+                          {account.account_id} - {account.state}
                         </option>
                       ))}
                     </select>
@@ -605,15 +588,13 @@ export function ChatPage() {
             </div>
           </div>
 
-          {chatStatus ? (
-            <div className={`inline-banner tone-${chatStatus.tone}`}>{chatStatus.message}</div>
-          ) : null}
+          {chatStatus ? <div className={`inline-banner tone-${chatStatus.tone}`}>{chatStatus.message}</div> : null}
 
-          <div className="chat-stage__body" onScroll={handleViewportScroll} ref={messageViewportRef}>
-            {loadingHistory ? <div className="chat-empty">Loading conversation history…</div> : null}
+          <div className="chat-stage__body" data-testid="chat-messages" onScroll={handleViewportScroll} ref={messageViewportRef}>
+            {loadingHistory ? <div className="chat-empty">Loading conversation history...</div> : null}
             {!loadingHistory && !selectedMessages.length ? (
               <div className="chat-empty">
-                <div className="chat-empty__mark">✶</div>
+                <div className="chat-empty__mark">*</div>
                 <h3>Start the next useful thread.</h3>
                 <p>
                   Streamed replies stay smooth, markdown is rendered only after completion, and the
@@ -647,6 +628,7 @@ export function ChatPage() {
               <span>Message</span>
               <textarea
                 className="composer-input"
+                data-testid="chat-composer"
                 onChange={(event) => setComposerValue(event.target.value)}
                 placeholder="Ask Gemini something useful. Streaming stays enabled by default."
                 value={composerValue}
@@ -679,13 +661,14 @@ export function ChatPage() {
                 ) : null}
                 <button
                   className="primary-button"
+                  data-testid="chat-send"
                   disabled={!composerValue.trim() || isSending}
                   type="button"
                   onClick={() => {
                     void handleSendMessage();
                   }}
                 >
-                  {isSending ? "Sending…" : "Send"}
+                  {isSending ? "Sending..." : "Send"}
                 </button>
               </div>
             </div>

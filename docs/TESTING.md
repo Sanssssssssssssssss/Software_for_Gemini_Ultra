@@ -8,6 +8,14 @@ Run the service test suite locally:
 py -m pytest tests/service -q
 ```
 
+Build the frontend before browser-level validation:
+
+```sh
+cd frontend
+npm install
+npm run build
+```
+
 Current coverage includes:
 
 - health and readiness endpoints
@@ -24,6 +32,24 @@ Current coverage includes:
 - provider timeout and error mapping
 - metrics endpoint exposure
 - isolated test execution independent of local `.env` or `config/accounts.json`
+- frontend UI session-cookie behavior in local mock mode
+- UI admin overview and async admin JSON actions
+
+## Playwright E2E
+
+The modern frontend ships with Playwright E2E coverage for the mock deployment path.
+
+```sh
+cd frontend
+npm run test:e2e
+```
+
+These tests boot the backend with [`config/e2e.mock.env`](../config/e2e.mock.env) and verify:
+
+- admin login into the React chat workspace
+- standard-user redirect away from `/admin`
+- streamed chat response in the new composer flow
+- async admin action flow without leaving the admin page
 
 ## Smoke test
 
@@ -80,7 +106,8 @@ Key knobs:
 Recommended validation flow:
 
 1. Run unit/integration tests.
-2. Start the service with a small real account inventory.
-3. Run `smoke_test.py`.
-4. Run `load_test.py` with conservative settings.
-5. Inspect `/metrics`, `/admin`, and provider-call logs during the run.
+2. Build the frontend and run Playwright E2E against the mock environment.
+3. Start the service with a small real account inventory.
+4. Run `smoke_test.py`.
+5. Run `load_test.py` with conservative settings.
+6. Inspect `/metrics`, `/admin`, and provider-call logs during the run.

@@ -51,6 +51,7 @@ The internal service lives in `src/gemini_service`. The current implementation a
 - user-owned sessions and batches with admin/user permission boundaries
 - mock provider validation mode for offline end-to-end verification
 - React + TypeScript + Vite frontend for Login, Setup, Chat, and Admin, served by FastAPI after build
+- Playwright E2E coverage for login, chat streaming, admin actions, and user/admin access boundaries
 
 Recommended first-run flow:
 
@@ -106,10 +107,13 @@ For offline validation without real Gemini cookies, use [config/accounts.mock.js
 For interactive cookie bootstrap without closing your main browser session, use `py scripts/playwright_bootstrap.py` to open a dedicated persistent Edge profile and export fresh Gemini cookies into `config/accounts.json`.
 The React frontend is built from [`frontend/`](frontend/) and now owns Login, Setup, Chat, and Admin. Build it with `cd frontend && npm install && npm run build` before launching the FastAPI app so `/ui/login`, `/setup`, `/ui/chat`, and `/admin` all resolve to the new SPA.
 For local HTTP startup, non-production environments such as `development`, `local`, `local-mock`, and `test` intentionally issue a non-`Secure` UI session cookie so browser logins work without HTTPS termination.
+Run `cd frontend && npm run test:e2e` to execute the Playwright browser suite against the mock environment defined in [`config/e2e.mock.env`](config/e2e.mock.env).
 
 ## Documentation
 
 - [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md)
+- [docs/FRONTEND.md](docs/FRONTEND.md)
+- [docs/FRONTEND_PERFORMANCE.md](docs/FRONTEND_PERFORMANCE.md)
 - [docs/RUNBOOK.md](docs/RUNBOOK.md)
 - [docs/HARDENING_CHECKLIST.md](docs/HARDENING_CHECKLIST.md)
 - [docs/FAILURE_MODES.md](docs/FAILURE_MODES.md)

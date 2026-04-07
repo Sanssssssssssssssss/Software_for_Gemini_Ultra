@@ -34,7 +34,7 @@ export function SessionRail({
           <h2>Conversation rail</h2>
         </div>
         <button className="primary-button rail-create" type="button" onClick={onCreateSession}>
-          New Session
+          <span data-testid="new-session-button">New Session</span>
         </button>
       </div>
       <div className="chat-rail__hint">

@@ -16,7 +16,7 @@ import {
 
 function formatTimestamp(value: string | null | undefined) {
   if (!value) {
-    return "—";
+    return "-";
   }
   const date = new Date(value);
   if (Number.isNaN(date.getTime())) {
@@ -156,7 +156,7 @@ export function AdminPage() {
         <section className="hero-card">
           <div className="hero-copy">
             <span className="eyebrow">Operations Bootstrap</span>
-            <h1>Loading admin console…</h1>
+            <h1>Loading admin console...</h1>
             <p>Account health, queue pressure, and recovery controls are being hydrated.</p>
           </div>
         </section>
@@ -213,7 +213,12 @@ export function AdminPage() {
                 <span className="eyebrow">Runtime Accounts</span>
                 <h2>Account health and controls</h2>
               </div>
-              <button className="secondary-link compact-link button-reset" type="button" onClick={refreshOverview}>
+              <button
+                className="secondary-link compact-link button-reset"
+                data-testid="admin-refresh-overview"
+                type="button"
+                onClick={refreshOverview}
+              >
                 Refresh overview
               </button>
             </div>
@@ -221,7 +226,7 @@ export function AdminPage() {
             {notice ? <div className="inline-banner tone-success">{notice}</div> : null}
             <div className="admin-account-grid">
               {overview.accounts.map((account) => (
-                <article className="account-admin-card" key={account.account_id}>
+                <article className="account-admin-card" data-testid={`admin-account-${account.account_id}`} key={account.account_id}>
                   <div className="account-admin-card__top">
                     <div>
                       <h3>{account.account_id}</h3>
@@ -268,6 +273,7 @@ export function AdminPage() {
                       return (
                         <button
                           className="secondary-link compact-link button-reset"
+                          data-testid={`admin-action-${account.account_id}-${action.key}`}
                           disabled={isPending}
                           key={action.key}
                           type="button"
@@ -275,7 +281,7 @@ export function AdminPage() {
                             void handleAction(account, action.key);
                           }}
                         >
-                          {isPending ? "Working…" : action.label}
+                          {isPending ? "Working..." : action.label}
                         </button>
                       );
                     })}

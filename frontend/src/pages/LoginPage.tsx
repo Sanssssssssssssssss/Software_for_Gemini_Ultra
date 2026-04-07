@@ -41,7 +41,7 @@ export function LoginPage() {
 
   const helperText = useMemo(() => {
     if (setupReady === null) {
-      return "Checking service readiness…";
+      return "Checking service readiness...";
     }
     if (setupReady) {
       return "Internal UI access is ready. Sign in with your LAN UI credentials.";
@@ -90,6 +90,7 @@ export function LoginPage() {
               <span>Username</span>
               <input
                 autoComplete="username"
+                data-testid="login-username"
                 value={form.username}
                 onChange={(event) => setForm((current) => ({ ...current, username: event.target.value }))}
                 placeholder="admin"
@@ -100,6 +101,7 @@ export function LoginPage() {
               <span>Password</span>
               <input
                 autoComplete="current-password"
+                data-testid="login-password"
                 type="password"
                 value={form.password}
                 onChange={(event) => setForm((current) => ({ ...current, password: event.target.value }))}
@@ -108,8 +110,8 @@ export function LoginPage() {
               />
             </label>
             {error ? <div className="inline-error">{error}</div> : null}
-            <button className="primary-button" disabled={loading} type="submit">
-              {loading ? "Signing in…" : "Open Workspace"}
+            <button className="primary-button" data-testid="login-submit" disabled={loading} type="submit">
+              {loading ? "Signing in..." : "Open Workspace"}
             </button>
           </form>
         </div>

@@ -71,7 +71,7 @@ export function SetupPage() {
         <div className="panel-surface stack-lg">
           <div className="section-head">
             <h2>Current checks</h2>
-            {loading ? <span className="body-muted">Refreshing…</span> : null}
+            {loading ? <span className="body-muted">Refreshing...</span> : null}
           </div>
           {error ? <div className="inline-error">{error}</div> : null}
           <div className="stack-md">
