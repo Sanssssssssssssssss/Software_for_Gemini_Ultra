@@ -51,6 +51,7 @@ def main() -> None:
         f"{SRC_DIR}{os.pathsep}{os.environ['PYTHONPATH']}" if os.environ.get("PYTHONPATH") else str(SRC_DIR)
     )
     from gemini_service.core.browser_cookie_sync import sync_inventory_from_browser_profiles
+    from gemini_service.core.bootstrap import evaluate_bootstrap_status
     from gemini_service.core.config import get_settings
 
     get_settings.cache_clear()
@@ -71,8 +72,21 @@ def main() -> None:
         for result in results:
             print(
                 f"[cookie-sync:{result.status}] {result.account_id}: {result.detail}"
-                + (f" (updated={result.updated})" if result.status == 'ok' else "")
+                + (f" (updated={result.updated})" if result.status == "ok" else "")
             )
+            if result.action:
+                print(f"  Action: {result.action}")
+
+    bootstrap = evaluate_bootstrap_status(settings)
+    failed_checks = [check for check in bootstrap.checks if check.status == "fail"]
+    warned_checks = [check for check in bootstrap.checks if check.status == "warn"]
+    if failed_checks or warned_checks:
+        print("Startup diagnostics:")
+        for check in failed_checks + warned_checks:
+            prefix = "[FAIL]" if check.status == "fail" else "[WARN]"
+            print(f"{prefix} {check.name}: {check.detail}")
+            if check.action:
+                print(f"  Action: {check.action}")
 
     host = args.host or os.environ.get("GEMINI_SERVICE_HOST", "127.0.0.1")
     port = args.port or int(os.environ.get("GEMINI_SERVICE_PORT", "8000"))

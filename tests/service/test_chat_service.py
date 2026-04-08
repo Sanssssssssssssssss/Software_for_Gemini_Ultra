@@ -23,9 +23,17 @@ USER_B = AuthContext(subject="user-b", role="user", source="test")
 
 
 class FakeChatAdapter:
-    def __init__(self, account_id: str, send_error: ServiceError | None = None):
+    def __init__(
+        self,
+        account_id: str,
+        send_error: ServiceError | None = None,
+        stream_started: asyncio.Event | None = None,
+        stream_release: asyncio.Event | None = None,
+    ):
         self.account_id = account_id
         self.send_error = send_error
+        self.stream_started = stream_started
+        self.stream_release = stream_release
         self.calls = 0
 
     async def probe(self) -> AccountProbeResult:
@@ -64,11 +72,15 @@ class FakeChatAdapter:
         if self.send_error is not None:
             raise self.send_error
         prompt = "\n\n".join(part.text for part in parts if isinstance(part, TextPromptPart))
+        if self.stream_started is not None:
+            self.stream_started.set()
         yield MessageChunk(
             text_delta=f"{self.account_id}:echo:{prompt}",
             text=f"{self.account_id}:echo:{prompt}",
             metadata=[f"{self.account_id}-cid", f"{self.account_id}-rid", f"{self.account_id}-rcid"],
         )
+        if self.stream_release is not None:
+            await self.stream_release.wait()
 
     async def close(self) -> None:
         return None
@@ -340,3 +352,129 @@ def test_stream_message_returns_error_event_when_sticky_account_is_unavailable(t
     assert len(events) == 1
     assert "event: error" in events[0]
     assert "preferred_account_unavailable" in events[0]
+
+
+def test_chat_service_can_create_second_session_while_first_session_is_streaming(tmp_path):
+    settings = _build_settings(
+        tmp_path,
+        [{"account_id": "acc-1", "secure_1psid": "cookie-a", "max_concurrency": 1}],
+        global_max_concurrency=1,
+        per_account_max_queue_depth=2,
+        global_max_queue_depth=2,
+        queue_wait_timeout_seconds=1,
+    )
+    stream_started = asyncio.Event()
+    stream_release = asyncio.Event()
+    adapter = FakeChatAdapter("acc-1", stream_started=stream_started, stream_release=stream_release)
+    pool = AccountPool(settings, adapter_factory=lambda config: adapter)
+    repo = ChatRepository(settings.database_url)
+    asset_service = AssetService(settings=settings, repository=repo, storage=LocalAssetStorage(str(tmp_path / "assets")))
+
+    async def collect_events(service, session_id: str) -> list[str]:
+        return [event async for event in service.stream_message(MessageRequest(session_id=session_id, message="hello"), auth=ADMIN)]
+
+    async def scenario():
+        await repo.start()
+        await pool.start()
+        service = ChatService(pool=pool, repository=repo, asset_service=asset_service)
+        first = await service.create_session(SessionCreateRequest(account_id="acc-1"), auth=ADMIN)
+        consumer = asyncio.create_task(collect_events(service, first.session_id))
+        await stream_started.wait()
+
+        second = await service.create_session(SessionCreateRequest(account_id="acc-1"), auth=ADMIN)
+        stream_release.set()
+        await consumer
+        await repo.close()
+        await pool.close()
+        return first, second
+
+    first, second = _run(scenario())
+    assert first.account_id == "acc-1"
+    assert second.account_id == "acc-1"
+    assert first.session_id != second.session_id
+
+
+def test_chat_service_queues_second_session_send_while_first_session_streams(tmp_path):
+    settings = _build_settings(
+        tmp_path,
+        [{"account_id": "acc-1", "secure_1psid": "cookie-a", "max_concurrency": 1}],
+        global_max_concurrency=1,
+        per_account_max_queue_depth=2,
+        global_max_queue_depth=2,
+        queue_wait_timeout_seconds=1,
+    )
+    stream_started = asyncio.Event()
+    stream_release = asyncio.Event()
+    adapter = FakeChatAdapter("acc-1", stream_started=stream_started, stream_release=stream_release)
+    pool = AccountPool(settings, adapter_factory=lambda config: adapter)
+    repo = ChatRepository(settings.database_url)
+    asset_service = AssetService(settings=settings, repository=repo, storage=LocalAssetStorage(str(tmp_path / "assets")))
+
+    async def collect_events(service, session_id: str) -> list[str]:
+        return [event async for event in service.stream_message(MessageRequest(session_id=session_id, message="hello"), auth=ADMIN)]
+
+    async def scenario():
+        await repo.start()
+        await pool.start()
+        service = ChatService(pool=pool, repository=repo, asset_service=asset_service)
+        first = await service.create_session(SessionCreateRequest(account_id="acc-1"), auth=ADMIN)
+        second = await service.create_session(SessionCreateRequest(account_id="acc-1"), auth=ADMIN)
+        consumer = asyncio.create_task(collect_events(service, first.session_id))
+        await stream_started.wait()
+
+        pending_send = asyncio.create_task(
+            service.send_message(MessageRequest(session_id=second.session_id, message="queued"), auth=ADMIN)
+        )
+        await asyncio.sleep(0.05)
+        runtime = pool.get_runtime("acc-1")
+        assert runtime is not None
+        assert runtime.queue_depth == 1
+
+        stream_release.set()
+        response = await pending_send
+        await consumer
+        await repo.close()
+        await pool.close()
+        return response
+
+    response = _run(scenario())
+    assert response.account_id == "acc-1"
+    assert response.content == "acc-1:echo:queued"
+
+
+def test_chat_service_rejects_concurrent_requests_in_same_session(tmp_path):
+    settings = _build_settings(
+        tmp_path,
+        [{"account_id": "acc-1", "secure_1psid": "cookie-a", "max_concurrency": 1}],
+        global_max_concurrency=1,
+        per_account_max_queue_depth=2,
+        global_max_queue_depth=2,
+        queue_wait_timeout_seconds=1,
+    )
+    stream_started = asyncio.Event()
+    stream_release = asyncio.Event()
+    adapter = FakeChatAdapter("acc-1", stream_started=stream_started, stream_release=stream_release)
+    pool = AccountPool(settings, adapter_factory=lambda config: adapter)
+    repo = ChatRepository(settings.database_url)
+    asset_service = AssetService(settings=settings, repository=repo, storage=LocalAssetStorage(str(tmp_path / "assets")))
+
+    async def collect_events(service, session_id: str) -> list[str]:
+        return [event async for event in service.stream_message(MessageRequest(session_id=session_id, message="hello"), auth=ADMIN)]
+
+    async def scenario():
+        await repo.start()
+        await pool.start()
+        service = ChatService(pool=pool, repository=repo, asset_service=asset_service)
+        session = await service.create_session(SessionCreateRequest(account_id="acc-1"), auth=ADMIN)
+        consumer = asyncio.create_task(collect_events(service, session.session_id))
+        await stream_started.wait()
+        with pytest.raises(ServiceError) as exc:
+            await service.send_message(MessageRequest(session_id=session.session_id, message="second"), auth=ADMIN)
+        stream_release.set()
+        await consumer
+        await repo.close()
+        await pool.close()
+        return exc.value
+
+    error = _run(scenario())
+    assert error.code == "session_busy"

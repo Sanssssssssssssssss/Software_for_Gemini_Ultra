@@ -425,13 +425,13 @@ class AccountPool:
 
         if preferred_account_id:
             preferred = self._runtimes.get(preferred_account_id)
-            if preferred and preferred.is_routable() and preferred.available_slots > 0:
+            if preferred and preferred.is_routable():
                 return AccountSelection(runtime=preferred)
             if require_preferred:
                 raise ServiceError(
                     status_code=503,
                     code="preferred_account_unavailable",
-                    message=f"Preferred account {preferred_account_id} is not ready to accept new sessions.",
+                    message=f"Preferred account {preferred_account_id} is not routable for new sessions.",
                     details={
                         "account_id": preferred_account_id,
                         "state": preferred.effective_state.value if preferred else "missing",
@@ -443,13 +443,12 @@ class AccountPool:
             for runtime in self._runtimes.values()
             if runtime.config.account_id not in exclude_account_ids
             and runtime.is_routable()
-            and runtime.available_slots > 0
         ]
         if not candidates:
             raise ServiceError(
                 status_code=503,
                 code="no_ready_accounts",
-                message="No Gemini account is currently ready to accept new sessions.",
+                message="No Gemini account is currently routable for new sessions.",
             )
 
         candidates.sort(

@@ -191,7 +191,14 @@ class AssetService:
                 code="asset_backend_unsupported",
                 message=f"Storage backend {asset.storage_backend} is not readable in this deployment.",
             )
-        return self.storage.resolve(asset.storage_uri)
+        try:
+            return self.storage.resolve(asset.storage_uri)
+        except ValueError as exc:
+            raise ServiceError(
+                status_code=409,
+                code="asset_path_invalid",
+                message="The stored asset path is invalid for this deployment.",
+            ) from exc
 
     async def _validate_upload(self, upload: UploadFile) -> ValidatedUpload:
         content = await upload.read()

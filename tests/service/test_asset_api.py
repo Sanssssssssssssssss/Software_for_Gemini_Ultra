@@ -2,6 +2,15 @@ from __future__ import annotations
 
 from io import BytesIO
 from zipfile import ZipFile
+import asyncio
+
+import pytest
+
+from gemini_service.core.config import Settings
+from gemini_service.core.errors import ServiceError
+from gemini_service.db.repository import ChatRepository
+from gemini_service.services.asset_service import AssetService
+from gemini_service.storage.local import LocalAssetStorage
 
 
 PNG_BYTES = (
@@ -96,3 +105,37 @@ def test_upload_accepts_pptx(client_factory):
 
         assert response.status_code == 200
         assert response.json()["asset"]["mime_type"] == "application/vnd.openxmlformats-officedocument.presentationml.presentation"
+
+
+def test_local_asset_storage_rejects_path_escape(tmp_path):
+    repo = ChatRepository(f"sqlite+aiosqlite:///{(tmp_path / 'service.db').as_posix()}")
+    settings = Settings(
+        require_auth=False,
+        database_url=f"sqlite+aiosqlite:///{(tmp_path / 'service.db').as_posix()}",
+        accounts_config_path=str(tmp_path / "accounts.json"),
+        asset_root_path=str(tmp_path / "assets"),
+    )
+    (tmp_path / "accounts.json").write_text('{"accounts":[]}', encoding="utf-8")
+    storage = LocalAssetStorage(str(tmp_path / "assets"))
+    service = AssetService(settings=settings, repository=repo, storage=storage)
+
+    async def scenario():
+        await repo.start()
+        asset = await repo.create_asset(
+            owner_subject="alice",
+            filename="escape.png",
+            mime_type="image/png",
+            size_bytes=len(PNG_BYTES),
+            sha256="abc",
+            status="available",
+            storage_backend="local",
+            storage_uri="../escape.png",
+        )
+        try:
+            service.resolve_asset_path(asset)
+        finally:
+            await repo.close()
+
+    with pytest.raises(ServiceError) as exc:
+        asyncio.run(scenario())
+    assert exc.value.code == "asset_path_invalid"

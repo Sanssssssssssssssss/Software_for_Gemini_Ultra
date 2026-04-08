@@ -13,6 +13,7 @@ ACCOUNTS_EXAMPLE = REPO_ROOT / "config" / "accounts.example.json"
 ACCOUNTS_TARGET = REPO_ROOT / "config" / "accounts.json"
 MOCK_ACCOUNTS_TARGET = REPO_ROOT / "config" / "accounts.mock.json"
 DATA_DIR = REPO_ROOT / "data"
+ASSET_DIR = DATA_DIR / "assets"
 
 
 def _render_env_template(profile: str) -> str:
@@ -50,7 +51,8 @@ def main() -> None:
     )
     args = parser.parse_args()
 
-    DATA_DIR.mkdir(exist_ok=True)
+    DATA_DIR.mkdir(parents=True, exist_ok=True)
+    ASSET_DIR.mkdir(parents=True, exist_ok=True)
     created: list[str] = []
     skipped: list[str] = []
     env_target = Path(args.env_target) if args.env_target else (ENV_TARGET if args.profile == "real" else MOCK_ENV_TARGET)
@@ -82,12 +84,12 @@ def main() -> None:
     print("\nNext steps:")
     if args.profile == "real":
         print("1. Edit config/accounts.json and replace the placeholder Gemini cookies.")
-        print("2. Run `py scripts/doctor.py` to validate local configuration.")
-        print("3. Start the service with `py scripts/run_local.py --env-file .env`.")
+        print("2. Run `python scripts/doctor.py --env-file .env` to validate local configuration.")
+        print("3. Start the service with `python scripts/run_local.py --env-file .env`.")
     else:
-        print("1. Start the offline mock service with `py scripts/run_local.py --mock`.")
+        print("1. Start the offline mock service with `python scripts/run_local.py --mock`.")
         print("2. Open `http://127.0.0.1:8000/ui/login` using the admin credentials from .env.local.mock.")
-        print("3. Run `py scripts/validate_service.py` for a full offline verification pass.")
+        print("3. Run `python scripts/validate_service.py` for a full offline verification pass.")
 
 
 if __name__ == "__main__":

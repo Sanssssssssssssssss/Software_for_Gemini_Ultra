@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import sys
 from pathlib import Path
 from urllib.error import HTTPError, URLError
@@ -17,6 +18,17 @@ from gemini_service.core.bootstrap import evaluate_bootstrap_status
 from gemini_service.core.config import get_settings
 
 
+def _load_env_file(path: Path) -> None:
+    if not path.exists():
+        raise FileNotFoundError(f"Environment file not found: {path}")
+    for raw_line in path.read_text(encoding="utf-8").splitlines():
+        line = raw_line.strip()
+        if not line or line.startswith("#") or "=" not in line:
+            continue
+        key, value = line.split("=", 1)
+        os.environ[key.strip()] = value.strip()
+
+
 def _http_get(url: str, token: str | None = None) -> dict:
     request = Request(url)
     if token:
@@ -27,9 +39,13 @@ def _http_get(url: str, token: str | None = None) -> dict:
 
 def main() -> None:
     parser = argparse.ArgumentParser(description="Run local setup checks for Gemini Internal Service.")
+    parser.add_argument("--env-file", help="Optional env file to load before running checks.")
     parser.add_argument("--base-url", help="Optional running service base URL, for example http://127.0.0.1:8000")
     parser.add_argument("--token", help="Optional API bearer token for protected endpoints.")
     args = parser.parse_args()
+
+    if args.env_file:
+        _load_env_file(Path(args.env_file))
 
     get_settings.cache_clear()
     settings = get_settings()

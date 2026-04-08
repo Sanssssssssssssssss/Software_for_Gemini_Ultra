@@ -56,21 +56,21 @@ The internal service lives in `src/gemini_service`. The current implementation a
 Recommended first-run flow:
 
 ```sh
-py scripts/bootstrap_local.py
-py -m pip install -e .[dev]
+python scripts/bootstrap_local.py
+python -m pip install -e .[dev]
 cd frontend && npm install && npm run build && cd ..
-py scripts/doctor.py
-py scripts/validate_service.py
-py scripts/run_local.py --env-file .env
+python scripts/doctor.py --env-file .env
+python scripts/validate_service.py
+python scripts/run_local.py --env-file .env
 ```
 
 Offline local startup without real Gemini cookies:
 
 ```sh
-py scripts/bootstrap_local.py --profile mock
-py -m pip install -e .[dev]
+python scripts/bootstrap_local.py --profile mock
+python -m pip install -e .[dev]
 cd frontend && npm install && npm run build && cd ..
-py scripts/run_local.py --mock
+python scripts/run_local.py --mock
 ```
 
 Then:
@@ -103,14 +103,21 @@ Useful endpoints:
 UI authentication uses admin credentials from `GEMINI_SERVICE_UI_USERNAME` / `GEMINI_SERVICE_UI_PASSWORD` and can optionally enable a standard user login with `GEMINI_SERVICE_UI_USER_USERNAME` / `GEMINI_SERVICE_UI_USER_PASSWORD`.
 API authentication uses `GEMINI_SERVICE_API_TOKENS`. Plain tokens remain backward compatible and are treated as admin tokens. Structured tokens use `subject|token|role`, for example `alice|token-1|user,bob|token-2|admin`.
 The current chat UI defaults standard users to automatic routing. Manual account pinning is only exposed to administrators for debugging and recovery work.
-For offline validation without real Gemini cookies, use [config/accounts.mock.json](config/accounts.mock.json) together with `py scripts/validate_service.py`.
-For interactive cookie bootstrap without closing your main browser session, use `py scripts/playwright_bootstrap.py` to open a dedicated persistent Edge profile and export fresh Gemini cookies into `config/accounts.json`.
-If you bind an account to a persistent browser profile with `cookie_source_browser` and `cookie_source_profile_dir`, local startup can now auto-refresh Gemini cookies before the service boots. Enable it with `GEMINI_SERVICE_COOKIE_AUTOSYNC_ENABLED=true`, then keep using `py scripts/run_local.py --env-file .env`.
+For offline validation without real Gemini cookies, use [config/accounts.mock.json](config/accounts.mock.json) together with `python scripts/validate_service.py`.
+For interactive cookie bootstrap without closing your main browser session, use `python scripts/playwright_bootstrap.py` to open a dedicated persistent browser profile and export fresh Gemini cookies into `config/accounts.json`.
+If you bind an account to a persistent browser profile with `cookie_source_browser` and `cookie_source_profile_dir`, local startup can now auto-refresh Gemini cookies before the service boots. Enable it with `GEMINI_SERVICE_COOKIE_AUTOSYNC_ENABLED=true`, then keep using `python scripts/run_local.py --env-file .env`.
 The React frontend is built from [`frontend/`](frontend/) and now owns Login, Setup, Chat, and Admin. Build it with `cd frontend && npm install && npm run build` before launching the FastAPI app so `/ui/login`, `/setup`, `/ui/chat`, and `/admin` all resolve to the new SPA.
 For local HTTP startup, non-production environments such as `development`, `local`, `local-mock`, and `test` intentionally issue a non-`Secure` UI session cookie so browser logins work without HTTPS termination.
 Run `cd frontend && npm run test:e2e` to execute the Playwright browser suite against the mock environment defined in [`config/e2e.mock.env`](config/e2e.mock.env).
 The service now has a multimodal backend contract foundation: uploads land in controlled storage through `POST /v1/uploads`, messages can send either legacy `{message: "..."}` payloads or structured `parts`, and uploaded assets can be inspected through `GET /v1/assets/{asset_id}` and `GET /v1/assets/{asset_id}/content`. Text-only clients remain backward compatible.
 Multimodal V1 currently supports `png`, `jpg`, `jpeg`, `webp`, `pdf`, and `pptx` inputs, plus text and generated-image outputs. Large binary assets are stored in controlled filesystem storage instead of the SQL database, and attachment-bearing turns default to `temporary=true` unless the caller explicitly opts out.
+
+## Startup notes
+
+- New session creation is now decoupled from immediate execution capacity. A healthy but busy account can still be assigned to a new sticky session; actual execution waits in the configured queue/backpressure path.
+- Different sessions may send concurrently, queue, or route independently. The same session is intentionally single-flight: a second send while one request is still in progress now returns `session_busy`.
+- `python scripts/doctor.py --env-file .env` and `/setup/status` now check more than secrets and cookies. They also report missing frontend builds, unwritable asset/database paths, and cookie autosync browser/profile issues.
+- `python scripts/run_local.py --skip-cookie-sync` is the safe escape hatch when cookie autosync is unavailable on a given machine.
 
 ## Documentation
 

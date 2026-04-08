@@ -1,9 +1,11 @@
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 import time
 from collections.abc import AsyncIterator
+from contextlib import asynccontextmanager
 
 from ..adapters.base import AssetPromptPart, PromptPart, TextPromptPart
 from ..core.errors import ServiceError
@@ -42,6 +44,8 @@ class ChatService:
         self.asset_service = asset_service
         self.telemetry = telemetry
         self.logger = logging.getLogger("gemini_service.provider")
+        self._session_execution_guard = asyncio.Lock()
+        self._active_session_ids: set[str] = set()
 
     async def create_session(self, request: SessionCreateRequest, auth: AuthContext) -> SessionResponse:
         if request.account_id and not auth.is_admin:
@@ -98,120 +102,11 @@ class ChatService:
         return [self._session_response(record) for record in records]
 
     async def send_message(self, request: MessageRequest, auth: AuthContext) -> MessageResponse:
-        record = await self._require_session(request.session_id, auth)
-        cached = await self._maybe_get_cached_response(record, request.idempotency_key)
-        if cached is not None:
-            return cached
-
-        selection, record = await self._prepare_session_runtime(record)
-        prompt_parts, user_part_records, effective_temporary = await self._resolve_prompt_parts(request, record, auth)
-        self.logger.info(
-            "provider_submit_started",
-            extra={
-                "event": "provider_submit_started",
-                "request_id": get_request_id(),
-                "session_id": record.id,
-                "owner_subject": auth.subject,
-                "account_id": selection.runtime.config.account_id,
-                "asset_count": sum(part.get("part_type") == "asset" for part in user_part_records),
-                "temporary": effective_temporary,
-            },
-        )
-        lease = await self.pool.acquire(
-            preferred_account_id=selection.runtime.config.account_id,
-            require_preferred=True,
-            allow_failover=False,
-        )
-        started = time.perf_counter()
-        async with lease as runtime:
-            try:
-                result = await runtime.adapter.send_message(
-                    parts=prompt_parts,
-                    chat_metadata=self._metadata_from_record(record),
-                    model=record.model_name,
-                    gem=record.gem_id,
-                    temporary=effective_temporary,
-                )
-            except ServiceError as exc:
-                self.pool.record_provider_failure(runtime, exc)
-                self._log_provider_event(
-                    operation="send_message",
-                    session_id=record.id,
-                    account_id=runtime.config.account_id,
-                    result="error",
-                    duration_ms=(time.perf_counter() - started) * 1000,
-                    auth=auth,
-                    error=exc,
-                )
-                self.logger.warning(
-                    "provider_submit_failed",
-                    extra={
-                        "event": "provider_submit_failed",
-                        "request_id": get_request_id(),
-                        "session_id": record.id,
-                        "owner_subject": auth.subject,
-                        "account_id": runtime.config.account_id,
-                        "error_code": exc.code,
-                    },
-                )
-                raise
-            else:
-                self.pool.record_provider_success(runtime)
-
-        self._log_provider_event(
-            operation="send_message",
-            session_id=record.id,
-            account_id=record.account_id,
-            result="success",
-            duration_ms=(time.perf_counter() - started) * 1000,
-            auth=auth,
-        )
-        updated = await self.repository.update_session_metadata(record.id, result.metadata)
-        user_message = await self.repository.add_message(
-            session_id=record.id,
-            role="user",
-            content=self._plain_text_from_parts(request),
-            idempotency_key=request.idempotency_key,
-            parts=user_part_records,
-        )
-        await self._bind_part_assets(record.id, user_message.id, user_part_records)
-        assistant_assets = await self._store_generated_media(record, auth, result.generated_media)
-        assistant_parts = [{"part_type": "text", "text_content": result.text}]
-        assistant_parts.extend(
-            {"part_type": "asset", "asset_id": asset.id, "metadata": {"media_type": "image"}}
-            for asset in assistant_assets
-        )
-        assistant_message = await self.repository.add_message(
-            session_id=record.id,
-            role="assistant",
-            content=result.text,
-            idempotency_key=request.idempotency_key,
-            parts=assistant_parts,
-        )
-        await self._bind_part_assets(record.id, assistant_message.id, assistant_parts)
-        return await self._message_response(
-            record=updated or record,
-            assistant_message=assistant_message,
-            cached=False,
-            user_message_id=user_message.id,
-        )
-
-    async def stream_message(self, request: MessageRequest, auth: AuthContext) -> AsyncIterator[str]:
-        record = await self._require_session(request.session_id, auth)
-        try:
+        async with self._session_execution(request.session_id):
+            record = await self._require_session(request.session_id, auth)
             cached = await self._maybe_get_cached_response(record, request.idempotency_key)
             if cached is not None:
-                yield self._sse(
-                    "accepted",
-                    {
-                        "session_id": record.id,
-                        "account_id": record.account_id,
-                        "cached": True,
-                    },
-                )
-                yield self._sse("chunk", {"text_delta": cached.content, "cached": True})
-                yield self._sse("done", cached.model_dump(mode="json"))
-                return
+                return cached
 
             selection, record = await self._prepare_session_runtime(record)
             prompt_parts, user_part_records, effective_temporary = await self._resolve_prompt_parts(request, record, auth)
@@ -225,178 +120,288 @@ class ChatService:
                     "account_id": selection.runtime.config.account_id,
                     "asset_count": sum(part.get("part_type") == "asset" for part in user_part_records),
                     "temporary": effective_temporary,
-                    "stream": True,
                 },
             )
-            yield self._sse(
-                "accepted",
-                {
-                    "session_id": record.id,
-                    "account_id": selection.runtime.config.account_id,
-                    "cached": False,
-                    "failover_from": selection.failover_from,
-                },
-            )
-            if selection.failover_from is not None:
-                yield self._sse(
-                    "status",
-                    {
-                        "session_id": record.id,
-                        "account_id": selection.runtime.config.account_id,
-                        "phase": "failover",
-                        "message": selection.reason or "Session rerouted to a healthy account.",
-                        "failover_from": selection.failover_from,
-                    },
-                )
             lease = await self.pool.acquire(
                 preferred_account_id=selection.runtime.config.account_id,
                 require_preferred=True,
                 allow_failover=False,
             )
+            started = time.perf_counter()
+            async with lease as runtime:
+                try:
+                    result = await runtime.adapter.send_message(
+                        parts=prompt_parts,
+                        chat_metadata=self._metadata_from_record(record),
+                        model=record.model_name,
+                        gem=record.gem_id,
+                        temporary=effective_temporary,
+                    )
+                except ServiceError as exc:
+                    self.pool.record_provider_failure(runtime, exc)
+                    self._log_provider_event(
+                        operation="send_message",
+                        session_id=record.id,
+                        account_id=runtime.config.account_id,
+                        result="error",
+                        duration_ms=(time.perf_counter() - started) * 1000,
+                        auth=auth,
+                        error=exc,
+                    )
+                    self.logger.warning(
+                        "provider_submit_failed",
+                        extra={
+                            "event": "provider_submit_failed",
+                            "request_id": get_request_id(),
+                            "session_id": record.id,
+                            "owner_subject": auth.subject,
+                            "account_id": runtime.config.account_id,
+                            "error_code": exc.code,
+                        },
+                    )
+                    raise
+                else:
+                    self.pool.record_provider_success(runtime)
+
+            self._log_provider_event(
+                operation="send_message",
+                session_id=record.id,
+                account_id=record.account_id,
+                result="success",
+                duration_ms=(time.perf_counter() - started) * 1000,
+                auth=auth,
+            )
+            updated = await self.repository.update_session_metadata(record.id, result.metadata)
+            user_message = await self.repository.add_message(
+                session_id=record.id,
+                role="user",
+                content=self._plain_text_from_parts(request),
+                idempotency_key=request.idempotency_key,
+                parts=user_part_records,
+            )
+            await self._bind_part_assets(record.id, user_message.id, user_part_records)
+            assistant_assets = await self._store_generated_media(record, auth, result.generated_media)
+            assistant_parts = [{"part_type": "text", "text_content": result.text}]
+            assistant_parts.extend(
+                {"part_type": "asset", "asset_id": asset.id, "metadata": {"media_type": "image"}}
+                for asset in assistant_assets
+            )
+            assistant_message = await self.repository.add_message(
+                session_id=record.id,
+                role="assistant",
+                content=result.text,
+                idempotency_key=request.idempotency_key,
+                parts=assistant_parts,
+            )
+            await self._bind_part_assets(record.id, assistant_message.id, assistant_parts)
+            return await self._message_response(
+                record=updated or record,
+                assistant_message=assistant_message,
+                cached=False,
+                user_message_id=user_message.id,
+            )
+
+    async def stream_message(self, request: MessageRequest, auth: AuthContext) -> AsyncIterator[str]:
+        try:
+            async with self._session_execution(request.session_id):
+                record = await self._require_session(request.session_id, auth)
+                cached = await self._maybe_get_cached_response(record, request.idempotency_key)
+                if cached is not None:
+                    yield self._sse(
+                        "accepted",
+                        {
+                            "session_id": record.id,
+                            "account_id": record.account_id,
+                            "cached": True,
+                        },
+                    )
+                    yield self._sse("chunk", {"text_delta": cached.content, "cached": True})
+                    yield self._sse("done", cached.model_dump(mode="json"))
+                    return
+
+                selection, record = await self._prepare_session_runtime(record)
+                prompt_parts, user_part_records, effective_temporary = await self._resolve_prompt_parts(request, record, auth)
+                self.logger.info(
+                    "provider_submit_started",
+                    extra={
+                        "event": "provider_submit_started",
+                        "request_id": get_request_id(),
+                        "session_id": record.id,
+                        "owner_subject": auth.subject,
+                        "account_id": selection.runtime.config.account_id,
+                        "asset_count": sum(part.get("part_type") == "asset" for part in user_part_records),
+                        "temporary": effective_temporary,
+                        "stream": True,
+                    },
+                )
+                yield self._sse(
+                    "accepted",
+                    {
+                        "session_id": record.id,
+                        "account_id": selection.runtime.config.account_id,
+                        "cached": False,
+                        "failover_from": selection.failover_from,
+                    },
+                )
+                if selection.failover_from is not None:
+                    yield self._sse(
+                        "status",
+                        {
+                            "session_id": record.id,
+                            "account_id": selection.runtime.config.account_id,
+                            "phase": "failover",
+                            "message": selection.reason or "Session rerouted to a healthy account.",
+                            "failover_from": selection.failover_from,
+                        },
+                    )
+                lease = await self.pool.acquire(
+                    preferred_account_id=selection.runtime.config.account_id,
+                    require_preferred=True,
+                    allow_failover=False,
+                )
+                accumulated_text = ""
+                final_metadata = self._metadata_from_record(record)
+                streamed_media_assets: list[MediaAssetRecord] = []
+                started = time.perf_counter()
+                async with lease as runtime:
+                    chunk_seen = False
+                    try:
+                        yield self._sse(
+                            "status",
+                            {
+                                "session_id": record.id,
+                                "account_id": runtime.config.account_id,
+                                "phase": "thinking",
+                                "message": "Provider accepted the request and is preparing a response.",
+                            },
+                        )
+                        async for chunk in runtime.adapter.stream_message(
+                            parts=prompt_parts,
+                            chat_metadata=final_metadata,
+                            model=record.model_name,
+                            gem=record.gem_id,
+                            temporary=effective_temporary,
+                        ):
+                            accumulated_text = chunk.text or (accumulated_text + chunk.text_delta)
+                            if chunk.metadata:
+                                final_metadata = chunk.metadata
+                            if chunk.generated_media:
+                                new_assets = await self._store_generated_media(record, auth, chunk.generated_media)
+                                streamed_media_assets.extend(new_assets)
+                                for asset in new_assets:
+                                    yield self._sse(
+                                        "media",
+                                        {
+                                            "session_id": record.id,
+                                            "account_id": runtime.config.account_id,
+                                            "asset": self._asset_response(asset).model_dump(mode="json"),
+                                            "media_type": "image",
+                                        },
+                                    )
+                            if not chunk_seen:
+                                chunk_seen = True
+                                yield self._sse(
+                                    "status",
+                                    {
+                                        "session_id": record.id,
+                                        "account_id": runtime.config.account_id,
+                                        "phase": "streaming",
+                                        "message": "Streaming response chunks.",
+                                    },
+                                )
+                            yield self._sse(
+                                "chunk",
+                                {
+                                    "session_id": record.id,
+                                    "account_id": runtime.config.account_id,
+                                    "text_delta": chunk.text_delta,
+                                },
+                            )
+                    except ServiceError as exc:
+                        self.pool.record_provider_failure(runtime, exc)
+                        self._log_provider_event(
+                            operation="stream_message",
+                            session_id=record.id,
+                            account_id=runtime.config.account_id,
+                            result="error",
+                            duration_ms=(time.perf_counter() - started) * 1000,
+                            auth=auth,
+                            error=exc,
+                        )
+                        self.logger.warning(
+                            "provider_submit_failed",
+                            extra={
+                                "event": "provider_submit_failed",
+                                "request_id": get_request_id(),
+                                "session_id": record.id,
+                                "owner_subject": auth.subject,
+                                "account_id": runtime.config.account_id,
+                                "error_code": exc.code,
+                                "stream": True,
+                            },
+                        )
+                        yield self._sse(
+                            "error",
+                            {
+                                "session_id": record.id,
+                                "account_id": runtime.config.account_id,
+                                "code": exc.code,
+                                "message": exc.message,
+                                "details": exc.details,
+                            },
+                        )
+                        return
+                    else:
+                        self.pool.record_provider_success(runtime)
+
+                self._log_provider_event(
+                    operation="stream_message",
+                    session_id=record.id,
+                    account_id=record.account_id,
+                    result="success",
+                    duration_ms=(time.perf_counter() - started) * 1000,
+                    auth=auth,
+                )
+                updated = await self.repository.update_session_metadata(record.id, final_metadata)
+                user_message = await self.repository.add_message(
+                    session_id=record.id,
+                    role="user",
+                    content=self._plain_text_from_parts(request),
+                    idempotency_key=request.idempotency_key,
+                    parts=user_part_records,
+                )
+                await self._bind_part_assets(record.id, user_message.id, user_part_records)
+                assistant_parts = [{"part_type": "text", "text_content": accumulated_text}]
+                assistant_parts.extend(
+                    {"part_type": "asset", "asset_id": asset.id, "metadata": {"media_type": "image"}}
+                    for asset in streamed_media_assets
+                )
+                assistant_message = await self.repository.add_message(
+                    session_id=record.id,
+                    role="assistant",
+                    content=accumulated_text,
+                    idempotency_key=request.idempotency_key,
+                    parts=assistant_parts,
+                )
+                await self._bind_part_assets(record.id, assistant_message.id, assistant_parts)
+                response = await self._message_response(
+                    record=updated or record,
+                    assistant_message=assistant_message,
+                    cached=False,
+                    user_message_id=user_message.id,
+                )
+                yield self._sse("done", response.model_dump(mode="json"))
         except ServiceError as exc:
             yield self._sse(
                 "error",
                 {
-                    "session_id": record.id,
-                    "account_id": record.account_id,
+                    "session_id": request.session_id,
                     "code": exc.code,
                     "message": exc.message,
                     "details": exc.details,
                 },
             )
             return
-        accumulated_text = ""
-        final_metadata = self._metadata_from_record(record)
-        streamed_media_assets: list[MediaAssetRecord] = []
-        started = time.perf_counter()
-        async with lease as runtime:
-            chunk_seen = False
-            try:
-                yield self._sse(
-                    "status",
-                    {
-                        "session_id": record.id,
-                        "account_id": runtime.config.account_id,
-                        "phase": "thinking",
-                        "message": "Provider accepted the request and is preparing a response.",
-                    },
-                )
-                async for chunk in runtime.adapter.stream_message(
-                    parts=prompt_parts,
-                    chat_metadata=final_metadata,
-                    model=record.model_name,
-                    gem=record.gem_id,
-                    temporary=effective_temporary,
-                ):
-                    accumulated_text = chunk.text or (accumulated_text + chunk.text_delta)
-                    if chunk.metadata:
-                        final_metadata = chunk.metadata
-                    if chunk.generated_media:
-                        new_assets = await self._store_generated_media(record, auth, chunk.generated_media)
-                        streamed_media_assets.extend(new_assets)
-                        for asset in new_assets:
-                            yield self._sse(
-                                "media",
-                                {
-                                    "session_id": record.id,
-                                    "account_id": runtime.config.account_id,
-                                    "asset": self._asset_response(asset).model_dump(mode="json"),
-                                    "media_type": "image",
-                                },
-                            )
-                    if not chunk_seen:
-                        chunk_seen = True
-                        yield self._sse(
-                            "status",
-                            {
-                                "session_id": record.id,
-                                "account_id": runtime.config.account_id,
-                                "phase": "streaming",
-                                "message": "Streaming response chunks.",
-                            },
-                        )
-                    yield self._sse(
-                        "chunk",
-                        {
-                            "session_id": record.id,
-                            "account_id": runtime.config.account_id,
-                            "text_delta": chunk.text_delta,
-                        },
-                    )
-            except ServiceError as exc:
-                self.pool.record_provider_failure(runtime, exc)
-                self._log_provider_event(
-                    operation="stream_message",
-                    session_id=record.id,
-                    account_id=runtime.config.account_id,
-                    result="error",
-                    duration_ms=(time.perf_counter() - started) * 1000,
-                    auth=auth,
-                    error=exc,
-                )
-                self.logger.warning(
-                    "provider_submit_failed",
-                    extra={
-                        "event": "provider_submit_failed",
-                        "request_id": get_request_id(),
-                        "session_id": record.id,
-                        "owner_subject": auth.subject,
-                        "account_id": runtime.config.account_id,
-                        "error_code": exc.code,
-                        "stream": True,
-                    },
-                )
-                yield self._sse(
-                    "error",
-                    {
-                        "session_id": record.id,
-                        "account_id": runtime.config.account_id,
-                        "code": exc.code,
-                        "message": exc.message,
-                        "details": exc.details,
-                    },
-                )
-                return
-            else:
-                self.pool.record_provider_success(runtime)
-
-        self._log_provider_event(
-            operation="stream_message",
-            session_id=record.id,
-            account_id=record.account_id,
-            result="success",
-            duration_ms=(time.perf_counter() - started) * 1000,
-            auth=auth,
-        )
-        updated = await self.repository.update_session_metadata(record.id, final_metadata)
-        user_message = await self.repository.add_message(
-            session_id=record.id,
-            role="user",
-            content=self._plain_text_from_parts(request),
-            idempotency_key=request.idempotency_key,
-            parts=user_part_records,
-        )
-        await self._bind_part_assets(record.id, user_message.id, user_part_records)
-        assistant_parts = [{"part_type": "text", "text_content": accumulated_text}]
-        assistant_parts.extend(
-            {"part_type": "asset", "asset_id": asset.id, "metadata": {"media_type": "image"}}
-            for asset in streamed_media_assets
-        )
-        assistant_message = await self.repository.add_message(
-            session_id=record.id,
-            role="assistant",
-            content=accumulated_text,
-            idempotency_key=request.idempotency_key,
-            parts=assistant_parts,
-        )
-        await self._bind_part_assets(record.id, assistant_message.id, assistant_parts)
-        response = await self._message_response(
-            record=updated or record,
-            assistant_message=assistant_message,
-            cached=False,
-            user_message_id=user_message.id,
-        )
-        yield self._sse("done", response.model_dump(mode="json"))
 
     async def _require_session(self, session_id: str, auth: AuthContext) -> SessionRecord:
         record = await self.repository.get_session(session_id)
@@ -539,6 +544,23 @@ class ChatService:
 
     def _sse(self, event: str, payload: dict) -> str:
         return f"event: {event}\ndata: {json.dumps(payload, ensure_ascii=True)}\n\n"
+
+    @asynccontextmanager
+    async def _session_execution(self, session_id: str):
+        async with self._session_execution_guard:
+            if session_id in self._active_session_ids:
+                raise ServiceError(
+                    status_code=409,
+                    code="session_busy",
+                    message="This session already has an in-flight request. Wait for it to finish before sending another message.",
+                    details={"session_id": session_id},
+                )
+            self._active_session_ids.add(session_id)
+        try:
+            yield
+        finally:
+            async with self._session_execution_guard:
+                self._active_session_ids.discard(session_id)
 
     async def _resolve_prompt_parts(
         self,

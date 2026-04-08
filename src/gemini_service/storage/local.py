@@ -35,7 +35,12 @@ class LocalAssetStorage:
         )
 
     def resolve(self, storage_uri: str) -> Path:
-        return (self.root_path / storage_uri).resolve()
+        resolved = (self.root_path / storage_uri).resolve()
+        try:
+            resolved.relative_to(self.root_path)
+        except ValueError as exc:
+            raise ValueError("Resolved asset path escapes the configured storage root.") from exc
+        return resolved
 
     async def delete(self, storage_uri: str) -> None:
         path = self.resolve(storage_uri)

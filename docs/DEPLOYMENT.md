@@ -30,8 +30,8 @@ The recommended first production baseline is Docker Compose with:
 ## Local process launch
 
 ```sh
-py -m pip install -e .
-py -m uvicorn gemini_service.main:app --host 0.0.0.0 --port 8000
+python -m pip install -e .
+python -m uvicorn gemini_service.main:app --host 0.0.0.0 --port 8000
 ```
 
 ## Docker Compose launch
@@ -57,13 +57,14 @@ Then verify:
 - `scripts/smoke_test.py` passes against the deployed service
 - `POST /v1/uploads` accepts a small image and `GET /v1/assets/{asset_id}` returns metadata
 - uploaded files land under the configured controlled asset directory, not inside the database
+- `/setup/status` reports passing or explainable warnings for `frontend_dist`, `asset_root`, `database_path`, and cookie autosync checks
 
 ## Pre-production offline verification
 
 Before using a real Gemini account inventory, validate the service layer itself with mock accounts:
 
 ```sh
-py scripts/validate_service.py
+python scripts/validate_service.py
 ```
 
 This exercises the real FastAPI app, scheduler, batch worker, auth boundaries, and metrics without requiring live Gemini cookies. Do not use mock accounts in production.
@@ -74,3 +75,5 @@ This exercises the real FastAPI app, scheduler, batch worker, auth boundaries, a
 - Multimodal V1 supports image, PDF, and PPTX inputs; do not advertise video/audio support yet.
 - Uploaded files and generated images are persisted in the configured storage backend and cleaned by a background TTL/orphan reaper.
 - This repository's Docker artifacts were authored for production deployment, but they were not runtime-verified in the current environment because Docker was not installed on the build host.
+- Prefer `python ...` commands in operator docs; do not assume a Windows-only `py` launcher exists.
+- Cookie autosync now probes common Chrome and Edge locations on Windows, macOS, and Linux. If autosync is unavailable on a host, use `python scripts/run_local.py --skip-cookie-sync`.

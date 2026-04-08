@@ -56,6 +56,33 @@ Actions:
 3. Use the admin page or admin API action to refresh the runtime after the new cookies are in place.
 4. Confirm `/v1/accounts` and `/admin` show the account as `ready` or `degraded`, then run a smoke test.
 
+## Incident: startup warns about browser autosync
+
+Likely causes:
+
+- Chrome or Edge is not installed in a standard location on this machine
+- the configured browser profile directory does not exist
+- the service user cannot read that browser profile
+
+Actions:
+
+1. Run `python scripts/doctor.py --env-file .env` and inspect the `cookie_autosync_*` checks.
+2. If the browser is installed in a non-standard path, set `cookie_source_browser_path` for the affected account.
+3. If the profile directory is wrong or missing, re-run `python scripts/playwright_bootstrap.py` or update `cookie_source_profile_dir`.
+4. If you need the service up immediately, start with `python scripts/run_local.py --env-file .env --skip-cookie-sync`.
+
+## Incident: one session reports `session_busy`
+
+Meaning:
+
+- the same session already has an in-flight message send or stream
+
+Actions:
+
+1. Wait for the current turn to finish, or cancel it from the client side.
+2. Use another session for parallel work. Different sessions can still route or queue independently.
+3. If users frequently hit this, educate them that concurrency is per session and not per workspace.
+
 ## Incident: account stuck in `cooling_down`
 
 Likely causes:

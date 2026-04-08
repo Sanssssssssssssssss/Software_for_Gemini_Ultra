@@ -5,7 +5,7 @@
 Run the service test suite locally:
 
 ```sh
-py -m pytest tests/service -q
+python -m pytest tests/service -q
 ```
 
 Build the frontend before browser-level validation:
@@ -63,7 +63,7 @@ These tests boot the backend with [`config/e2e.mock.env`](../config/e2e.mock.env
 Use the smoke script against a running service with valid account cookies:
 
 ```sh
-py scripts/smoke_test.py --base-url http://127.0.0.1:8000 --token change-me
+python scripts/smoke_test.py --base-url http://127.0.0.1:8000 --token change-me
 ```
 
 The smoke script verifies:
@@ -88,7 +88,7 @@ Use the validation orchestrator to boot the service against mock provider accoun
 - load matrix validation at multiple concurrency levels
 
 ```sh
-py scripts/validate_service.py
+python scripts/validate_service.py
 ```
 
 The validator uses [config/accounts.mock.json](../config/accounts.mock.json) by default and does not require real Gemini cookies.
@@ -99,7 +99,7 @@ Use the async load harness to exercise concurrent sessions and a mix of
 streaming and non-streaming workloads:
 
 ```sh
-py scripts/load_test.py --base-url http://127.0.0.1:8000 --token change-me --workers 8 --duration-seconds 60 --stream-ratio 0.4
+python scripts/load_test.py --base-url http://127.0.0.1:8000 --token change-me --workers 8 --duration-seconds 60 --stream-ratio 0.4
 ```
 
 Key knobs:
@@ -127,5 +127,31 @@ Run these checks after enabling file uploads:
 
 - upload a supported image, PDF, and PPTX through `POST /v1/uploads`
 - verify `GET /v1/assets/{asset_id}` and `GET /v1/assets/{asset_id}/content`
-- run `py -m pytest tests/service/test_asset_api.py tests/service/test_asset_cleanup_service.py -q`
+- run `python -m pytest tests/service/test_asset_api.py tests/service/test_asset_cleanup_service.py -q`
+
+## Concurrency regression checks
+
+The service test suite now explicitly covers:
+
+- creating session B while session A is still streaming
+- sending on session B while session A occupies the only slot, with queueing instead of create-time failure
+- rejecting concurrent sends on the same session with `session_busy`
+
+These checks are the guardrail against re-coupling session creation to `available_slots > 0`.
+
+## Startup diagnostics checks
+
+Before handing a machine to another engineer, run:
+
+```sh
+python scripts/doctor.py --env-file .env
+```
+
+It now validates more than cookies and tokens. Expect checks for:
+
+- frontend build output
+- asset storage root
+- SQLite directory readiness when applicable
+- account inventory path permissions
+- browser autosync executable/profile availability
 - confirm `/metrics` exposes `gemini_service_asset_cleanup_runs_total`, `gemini_service_asset_expired_total`, and `gemini_service_asset_deleted_total`

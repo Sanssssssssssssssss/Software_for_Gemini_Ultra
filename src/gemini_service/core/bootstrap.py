@@ -4,6 +4,9 @@ import json
 from pathlib import Path
 from typing import TYPE_CHECKING
 
+from sqlalchemy.engine import make_url
+
+from .browser_cookie_sync import normalize_profile_dir, resolve_browser_path, validate_profile_dir
 from ..schemas.accounts import AccountInventory
 from ..schemas.common import BootstrapCheck, BootstrapStatusResponse
 
@@ -20,6 +23,7 @@ _PLACEHOLDER_MARKERS = {
     "replace-me",
     "replace-me-if-required",
 }
+_REPO_ROOT = Path(__file__).resolve().parents[3]
 
 
 def _is_placeholder(value: str | None) -> bool:
@@ -31,6 +35,39 @@ def _is_placeholder(value: str | None) -> bool:
         or normalized.startswith("replace-")
         or "change-me" in normalized
     )
+
+
+def _resolve_repo_path(path_value: str) -> Path:
+    path = Path(path_value).expanduser()
+    if not path.is_absolute():
+        path = (_REPO_ROOT / path).resolve()
+    return path
+
+
+def _check_directory_ready(path: Path, *, create: bool = True) -> tuple[bool, str]:
+    try:
+        if create:
+            path.mkdir(parents=True, exist_ok=True)
+        elif not path.exists():
+            return False, "path does not exist"
+    except OSError as exc:
+        return False, str(exc)
+
+    if not path.exists():
+        return False, "path does not exist"
+    if not path.is_dir():
+        return False, "path is not a directory"
+    try:
+        probe = path / ".gemini-service-write-check"
+        probe.write_text("ok", encoding="utf-8")
+        probe.unlink()
+    except OSError as exc:
+        return False, str(exc)
+    return True, "directory is readable and writable"
+
+
+def _check_file_parent_ready(path: Path) -> tuple[bool, str]:
+    return _check_directory_ready(path.parent, create=True)
 
 
 def evaluate_bootstrap_status(
@@ -48,7 +85,7 @@ def evaluate_bootstrap_status(
                 name="env_file",
                 status="fail",
                 detail="No .env file was found.",
-                action="Run `py scripts/bootstrap_local.py` to generate local config templates.",
+                action="Run `python scripts/bootstrap_local.py` to generate local config templates.",
             )
         )
 
@@ -123,6 +160,19 @@ def evaluate_bootstrap_status(
             )
         )
     else:
+        parent_ok, parent_detail = _check_file_parent_ready(accounts_path.resolve())
+        checks.append(
+            BootstrapCheck(
+                name="accounts_path_permissions",
+                status="pass" if parent_ok else "fail",
+                detail=(
+                    f"Account inventory directory is ready: {accounts_path.parent.resolve()}"
+                    if parent_ok
+                    else f"Account inventory directory is not writable: {parent_detail}"
+                ),
+                action=None if parent_ok else "Ensure the account inventory directory exists and is writable by the service user.",
+            )
+        )
         try:
             inventory = AccountInventory.model_validate(json.loads(accounts_path.read_text(encoding="utf-8")))
         except Exception as exc:
@@ -167,6 +217,112 @@ def evaluate_bootstrap_status(
                             detail=f"Detected {len(inventory.accounts)} configured account(s) with non-placeholder cookies.",
                         )
                     )
+
+                if settings.cookie_autosync_enabled:
+                    autosync_accounts = [
+                        account for account in inventory.accounts if account.cookie_source_profile_dir
+                    ]
+                    if not autosync_accounts:
+                        checks.append(
+                            BootstrapCheck(
+                                name="cookie_autosync",
+                                status="warn",
+                                detail="Cookie autosync is enabled, but no account has a persistent browser profile configured.",
+                                action="Set cookie_source_profile_dir for an account or disable cookie autosync.",
+                            )
+                        )
+                    for account in autosync_accounts:
+                        browser = (account.cookie_source_browser or settings.cookie_autosync_browser).lower()
+                        browser_path = resolve_browser_path(browser, account.cookie_source_browser_path)
+                        if browser_path is None:
+                            checks.append(
+                                BootstrapCheck(
+                                    name=f"cookie_autosync_browser:{account.account_id}",
+                                    status="warn",
+                                    detail=f"No {browser} executable could be found for autosync on this machine.",
+                                    action="Install the browser, set cookie_source_browser_path, or disable autosync for this account.",
+                                )
+                            )
+                            continue
+                        profile_dir = normalize_profile_dir(accounts_path.resolve(), account.cookie_source_profile_dir or "")
+                        valid_profile, _, profile_action = validate_profile_dir(profile_dir)
+                        checks.append(
+                            BootstrapCheck(
+                                name=f"cookie_autosync_profile:{account.account_id}",
+                                status="pass" if valid_profile else "warn",
+                                detail=(
+                                    f"Persistent browser profile is available for autosync: {profile_dir}"
+                                    if valid_profile
+                                    else "Configured browser profile directory is missing or unusable for autosync."
+                                ),
+                                action=None if valid_profile else profile_action,
+                            )
+                        )
+
+    frontend_dist = _resolve_repo_path(settings.frontend_dist_path)
+    if settings.ui_spa_enabled:
+        if (frontend_dist / "index.html").exists():
+            checks.append(
+                BootstrapCheck(
+                    name="frontend_dist",
+                    status="pass",
+                    detail=f"React frontend build detected at {frontend_dist}.",
+                )
+            )
+        else:
+            checks.append(
+                BootstrapCheck(
+                    name="frontend_dist",
+                    status="warn",
+                    detail=f"React frontend build was not found at {frontend_dist}. Legacy templates will be used instead.",
+                    action="Run `cd frontend && npm install && npm run build` before handing the service to users.",
+                )
+            )
+
+    asset_root = _resolve_repo_path(settings.asset_root_path)
+    asset_ok, asset_detail = _check_directory_ready(asset_root, create=True)
+    checks.append(
+        BootstrapCheck(
+            name="asset_root",
+            status="pass" if asset_ok else "fail",
+            detail=(
+                f"Asset storage directory is ready at {asset_root}."
+                if asset_ok
+                else f"Asset storage directory is not writable: {asset_detail}"
+            ),
+            action=None if asset_ok else "Ensure GEMINI_SERVICE_ASSET_ROOT_PATH points to a writable directory.",
+        )
+    )
+
+    try:
+        database_url = make_url(settings.database_url)
+    except Exception as exc:
+        checks.append(
+            BootstrapCheck(
+                name="database_path",
+                status="fail",
+                detail=f"Database URL could not be parsed: {exc}",
+                action="Set GEMINI_SERVICE_DATABASE_URL to a valid SQLAlchemy URL.",
+            )
+        )
+    else:
+        if database_url.get_backend_name().startswith("sqlite"):
+            sqlite_path = Path(database_url.database or "")
+            if not sqlite_path.is_absolute():
+                sqlite_path = (_REPO_ROOT / sqlite_path).resolve()
+            db_ok, db_detail = _check_file_parent_ready(sqlite_path)
+            checks.append(
+                BootstrapCheck(
+                    name="database_path",
+                    status="pass" if db_ok else "fail",
+                    detail=(
+                        f"SQLite database directory is ready at {sqlite_path.parent}."
+                        if db_ok
+                        else f"SQLite database directory is not writable: {db_detail}"
+                    ),
+                    action=None if db_ok else "Ensure the SQLite database directory exists and is writable, or switch to PostgreSQL.",
+                )
+            )
 
     if pool is not None:
         ready_accounts = pool.ready_account_count

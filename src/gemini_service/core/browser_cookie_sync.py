@@ -1,8 +1,11 @@
 from __future__ import annotations
 
 import json
+import os
+import shutil
 import socket
 import subprocess
+import sys
 import time
 from dataclasses import dataclass
 from pathlib import Path
@@ -11,7 +14,7 @@ from urllib.error import URLError
 from urllib.request import urlopen
 
 COOKIE_NAMES = ("__Secure-1PSID", "__Secure-1PSIDTS")
-DEFAULT_BROWSER_PATHS = {
+WINDOWS_BROWSER_PATHS = {
     "chrome": [
         Path(r"C:\Program Files\Google\Chrome\Application\chrome.exe"),
         Path(r"C:\Program Files (x86)\Google\Chrome\Application\chrome.exe"),
@@ -20,6 +23,25 @@ DEFAULT_BROWSER_PATHS = {
         Path(r"C:\Program Files (x86)\Microsoft\Edge\Application\msedge.exe"),
         Path(r"C:\Program Files\Microsoft\Edge\Application\msedge.exe"),
     ],
+}
+MACOS_BROWSER_PATHS = {
+    "chrome": [Path("/Applications/Google Chrome.app/Contents/MacOS/Google Chrome")],
+    "edge": [Path("/Applications/Microsoft Edge.app/Contents/MacOS/Microsoft Edge")],
+}
+LINUX_BROWSER_PATHS = {
+    "chrome": [
+        Path("/usr/bin/google-chrome"),
+        Path("/usr/bin/google-chrome-stable"),
+        Path("/snap/bin/chromium"),
+    ],
+    "edge": [
+        Path("/usr/bin/microsoft-edge"),
+        Path("/usr/bin/microsoft-edge-stable"),
+    ],
+}
+PATH_CANDIDATES = {
+    "chrome": ("google-chrome", "google-chrome-stable", "chrome", "chromium", "chromium-browser"),
+    "edge": ("microsoft-edge", "microsoft-edge-stable", "msedge"),
 }
 
 
@@ -31,6 +53,8 @@ class CookieSyncResult:
     updated: bool = False
     profile_dir: str | None = None
     browser: str | None = None
+    code: str = ""
+    action: str | None = None
 
 
 def load_inventory(path: Path) -> dict[str, Any]:
@@ -41,15 +65,66 @@ def save_inventory(path: Path, payload: dict[str, Any]) -> None:
     path.write_text(json.dumps(payload, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
 
 
+def default_browser_paths(browser: str) -> list[Path]:
+    browser = browser.lower()
+    if sys.platform == "win32":
+        candidates = WINDOWS_BROWSER_PATHS.get(browser, [])
+    elif sys.platform == "darwin":
+        candidates = MACOS_BROWSER_PATHS.get(browser, [])
+    else:
+        candidates = LINUX_BROWSER_PATHS.get(browser, [])
+    resolved = [candidate for candidate in candidates if candidate.exists()]
+    for name in PATH_CANDIDATES.get(browser, ()):
+        which = shutil.which(name)
+        if which:
+            path = Path(which)
+            if path not in resolved:
+                resolved.append(path)
+    return resolved
+
+
 def resolve_browser_path(browser: str, explicit_path: str | None = None) -> Path | None:
     if explicit_path:
         candidate = Path(explicit_path).expanduser().resolve()
         return candidate if candidate.exists() else None
 
-    for candidate in DEFAULT_BROWSER_PATHS.get(browser.lower(), []):
-        if candidate.exists():
-            return candidate
-    return None
+    candidates = default_browser_paths(browser)
+    return candidates[0] if candidates else None
+
+
+def normalize_profile_dir(accounts_path: Path, profile_dir_value: str) -> Path:
+    profile_dir = Path(profile_dir_value).expanduser()
+    if not profile_dir.is_absolute():
+        profile_dir = (accounts_path.parent.parent / profile_dir).resolve()
+    return profile_dir
+
+
+def validate_profile_dir(profile_dir: Path) -> tuple[bool, str, str | None]:
+    if not profile_dir.exists():
+        return (
+            False,
+            "cookie_profile_missing",
+            "Create or log into the configured browser profile first, or disable cookie autosync for this account.",
+        )
+    if not profile_dir.is_dir():
+        return (
+            False,
+            "cookie_profile_invalid",
+            "Point cookie_source_profile_dir at a browser user-data directory.",
+        )
+    if not os.access(profile_dir, os.R_OK):
+        return (
+            False,
+            "cookie_profile_unreadable",
+            "Grant the service user read access to the configured browser profile directory.",
+        )
+    if not os.access(profile_dir, os.W_OK):
+        return (
+            False,
+            "cookie_profile_unwritable",
+            "Grant the service user write access to the configured browser profile directory or use a dedicated persistent profile.",
+        )
+    return True, "", None
 
 
 def _find_free_port() -> int:
@@ -68,7 +143,7 @@ def _wait_for_cdp(port: int, timeout_seconds: int) -> None:
                 return
         except URLError:
             time.sleep(0.5)
-    raise TimeoutError(f"Timed out waiting for browser CDP endpoint on port {port}.")
+    raise TimeoutError("Timed out waiting for the browser debugging endpoint.")
 
 
 def _extract_cookies_via_cdp(port: int) -> tuple[str, str] | None:
@@ -96,6 +171,15 @@ def _extract_cookies_via_cdp(port: int) -> tuple[str, str] | None:
             browser.close()
 
 
+def _looks_like_cookie_pair(secure_1psid: str, secure_1psidts: str) -> bool:
+    return (
+        bool(secure_1psid)
+        and bool(secure_1psidts)
+        and len(secure_1psid) > 20
+        and secure_1psidts.startswith("sidts-")
+    )
+
+
 def sync_cookies_from_profile(
     *,
     browser: str,
@@ -105,7 +189,10 @@ def sync_cookies_from_profile(
     timeout_seconds: int,
     headless: bool,
 ) -> tuple[str, str]:
-    profile_dir.mkdir(parents=True, exist_ok=True)
+    valid, _, action = validate_profile_dir(profile_dir)
+    if not valid:
+        raise FileNotFoundError(action or "The configured browser profile is not ready.")
+
     port = _find_free_port()
     args = [
         str(browser_path),
@@ -115,8 +202,7 @@ def sync_cookies_from_profile(
         "--no-default-browser-check",
     ]
     if headless:
-        args.append("--headless=new")
-        args.append("about:blank")
+        args.extend(["--headless=new", "about:blank"])
     else:
         args.extend(["--new-window", start_url])
 
@@ -126,7 +212,11 @@ def sync_cookies_from_profile(
         cookies = _extract_cookies_via_cdp(port)
         if cookies is None:
             raise RuntimeError(
-                f"Required Gemini cookies were not found in browser profile {profile_dir}."
+                "Required Gemini cookies were not found in the configured browser profile."
+            )
+        if not _looks_like_cookie_pair(*cookies):
+            raise RuntimeError(
+                "The browser profile returned cookie values that do not look like Gemini web session cookies."
             )
         return cookies
     finally:
@@ -163,7 +253,9 @@ def sync_inventory_from_browser_profiles(
                 CookieSyncResult(
                     account_id=account_id,
                     status="skipped",
-                    detail="No cookie_source_profile_dir configured.",
+                    code="cookie_profile_unconfigured",
+                    detail="No persistent browser profile is configured for cookie autosync.",
+                    action="Set cookie_source_profile_dir for the account or start with --skip-cookie-sync.",
                 )
             )
             continue
@@ -175,16 +267,31 @@ def sync_inventory_from_browser_profiles(
                 CookieSyncResult(
                     account_id=account_id,
                     status="error",
-                    detail=f"Browser executable for {browser} was not found.",
+                    code="browser_not_found",
+                    detail=f"Could not find a {browser} executable on this machine.",
                     profile_dir=profile_dir_value,
                     browser=browser,
+                    action="Install the browser, set cookie_source_browser_path, or start with --skip-cookie-sync.",
                 )
             )
             continue
 
-        profile_dir = Path(profile_dir_value).expanduser()
-        if not profile_dir.is_absolute():
-            profile_dir = (accounts_path.parent.parent / profile_dir).resolve()
+        profile_dir = normalize_profile_dir(accounts_path, profile_dir_value)
+        valid_profile, profile_code, profile_action = validate_profile_dir(profile_dir)
+        if not valid_profile:
+            results.append(
+                CookieSyncResult(
+                    account_id=account_id,
+                    status="error",
+                    code=profile_code,
+                    detail="The configured browser profile directory is missing or unusable.",
+                    profile_dir=str(profile_dir),
+                    browser=browser,
+                    action=profile_action,
+                )
+            )
+            continue
+
         try:
             secure_1psid, secure_1psidts = sync_cookies_from_profile(
                 browser=browser,
@@ -199,9 +306,11 @@ def sync_inventory_from_browser_profiles(
                 CookieSyncResult(
                     account_id=account_id,
                     status="error",
+                    code="cookie_sync_failed",
                     detail=str(exc),
                     profile_dir=str(profile_dir),
                     browser=browser,
+                    action="Log into Gemini in that browser profile, then retry startup or pass --skip-cookie-sync.",
                 )
             )
             continue
@@ -221,6 +330,7 @@ def sync_inventory_from_browser_profiles(
             CookieSyncResult(
                 account_id=account_id,
                 status="ok",
+                code="cookie_sync_ok",
                 detail="Browser profile cookies synced successfully.",
                 updated=updated,
                 profile_dir=str(profile_dir),

@@ -14,5 +14,9 @@
 - Review `GEMINI_SERVICE_ASSET_TTL_HOURS` and `GEMINI_SERVICE_ASSET_ORPHAN_GRACE_HOURS` before enabling file uploads for users.
 - Validate that asset downloads require the owning UI/API subject or an admin token.
 - Keep unsupported file types blocked at the service layer; do not trust filename extensions alone.
+- Verify that the configured asset root, database directory, account inventory directory, and browser profile directories are writable by the service user.
+- If cookie autosync is enabled, verify browser discovery and profile readability on the target OS before rollout. Keep `--skip-cookie-sync` documented as the operator fallback.
+- Confirm frontend build artifacts exist at `frontend/dist` before relying on the SPA UI in a fresh environment.
+- Treat `session_busy` as intended protection against concurrent writes to the same conversation, not as a retry target.
 - Add malware scanning or downstream DLP controls before broad enterprise rollout of shared-account file workflows.
 - Confirm AGPL and internal legal obligations with your organization before broad rollout.

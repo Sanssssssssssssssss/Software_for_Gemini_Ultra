@@ -20,6 +20,10 @@ Sticky sessions keep context on one account. If that account degrades, the sessi
 
 If burst load exceeds configured concurrency, latency rises and more accounts may enter cooldown.
 
+## Session placement versus request execution
+
+New session placement is intentionally decoupled from immediate execution capacity. Healthy but busy accounts may still receive new sticky sessions, and actual waiting now happens in the request queue/backpressure layer. If operators see rising queue depth, that is expected under load and should not be "fixed" by rejecting session creation.
+
 ## Mixed stream and non-stream traffic
 
 Streaming requests occupy account capacity longer than short non-stream calls. Use load testing to tune ratios and per-account concurrency.
@@ -43,3 +47,7 @@ The service can store a file locally and still fail before the provider accepts 
 ## Asset lifecycle drift
 
 If files are deleted from local storage outside the service, metadata may remain while the file content is gone. Asset download paths now guard against non-available assets, but operators should avoid manual filesystem tampering.
+
+## Startup environment drift
+
+Cross-platform local startup can still fail when browser binaries, browser profile directories, frontend build output, database directories, or asset roots are missing or not writable. Use `python scripts/doctor.py --env-file .env` and `/setup/status` before assuming a cookie or provider outage.
