@@ -6,6 +6,8 @@
       "enabled": true,
       "secure_1psid": "replace-me",
       "secure_1psidts": "replace-me-if-required",
+      "cookie_source_browser": "chrome",
+      "cookie_source_profile_dir": "data/chrome-manual-profile",
       "max_concurrency": 1,
       "cooldown_seconds": 60,
       "request_timeout_seconds": 450,

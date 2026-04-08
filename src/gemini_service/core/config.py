@@ -34,6 +34,11 @@ class Settings(BaseSettings):
     degraded_failure_threshold: int = 1
     unavailable_failure_threshold: int = 3
     recent_error_limit: int = 5
+    cookie_autosync_enabled: bool = False
+    cookie_autosync_browser: str = "chrome"
+    cookie_autosync_headless: bool = True
+    cookie_autosync_timeout_seconds: int = 20
+    cookie_autosync_start_url: str = "https://gemini.google.com/app"
     ui_username: str = "admin"
     ui_password: str = "change-me-ui-password"
     ui_user_username: str = ""

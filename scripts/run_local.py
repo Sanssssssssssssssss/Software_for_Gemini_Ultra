@@ -21,6 +21,11 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--host", default="", help="Override host from the env file.")
     parser.add_argument("--port", type=int, default=0, help="Override port from the env file.")
     parser.add_argument("--reload", action="store_true", help="Force uvicorn reload mode on.")
+    parser.add_argument(
+        "--skip-cookie-sync",
+        action="store_true",
+        help="Do not auto-refresh Gemini cookies from configured persistent browser profiles before startup.",
+    )
     return parser.parse_args()
 
 
@@ -45,6 +50,29 @@ def main() -> None:
     os.environ["PYTHONPATH"] = (
         f"{SRC_DIR}{os.pathsep}{os.environ['PYTHONPATH']}" if os.environ.get("PYTHONPATH") else str(SRC_DIR)
     )
+    from gemini_service.core.browser_cookie_sync import sync_inventory_from_browser_profiles
+    from gemini_service.core.config import get_settings
+
+    get_settings.cache_clear()
+    settings = get_settings()
+
+    if not args.skip_cookie_sync and settings.cookie_autosync_enabled:
+        accounts_path = Path(settings.accounts_config_path)
+        if not accounts_path.is_absolute():
+            accounts_path = (REPO_ROOT / accounts_path).resolve()
+        print("Checking persistent browser profiles for fresh Gemini cookies...")
+        results = sync_inventory_from_browser_profiles(
+            accounts_path=accounts_path,
+            timeout_seconds=settings.cookie_autosync_timeout_seconds,
+            start_url=settings.cookie_autosync_start_url,
+            default_browser=settings.cookie_autosync_browser,
+            headless=settings.cookie_autosync_headless,
+        )
+        for result in results:
+            print(
+                f"[cookie-sync:{result.status}] {result.account_id}: {result.detail}"
+                + (f" (updated={result.updated})" if result.status == 'ok' else "")
+            )
 
     host = args.host or os.environ.get("GEMINI_SERVICE_HOST", "127.0.0.1")
     port = args.port or int(os.environ.get("GEMINI_SERVICE_PORT", "8000"))

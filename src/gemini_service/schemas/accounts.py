@@ -9,6 +9,9 @@ class AccountConfig(BaseModel):
     provider_backend: str = "gemini_web"
     secure_1psid: str
     secure_1psidts: str | None = None
+    cookie_source_browser: str | None = None
+    cookie_source_browser_path: str | None = None
+    cookie_source_profile_dir: str | None = None
     proxy: str | None = None
     max_concurrency: int = Field(default=1, ge=1)
     cooldown_seconds: int = Field(default=60, ge=5)
