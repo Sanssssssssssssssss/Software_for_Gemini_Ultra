@@ -1,3 +1,5 @@
+import type { MessageMedia, MessageResponsePart } from "../lib/api";
+import { MessageAttachments } from "./MessageAttachments";
 import { MarkdownMessage } from "./MarkdownMessage";
 import { ThinkingIndicator } from "./ThinkingIndicator";
 
@@ -10,6 +12,8 @@ export type UiMessage = {
   isThinking?: boolean;
   thinkingLabel?: string | null;
   errorText?: string | null;
+  parts?: MessageResponsePart[];
+  media?: MessageMedia[];
 };
 
 type MessageBubbleProps = {
@@ -35,6 +39,7 @@ export function MessageBubble({ message }: MessageBubbleProps) {
       ) : (
         <pre className="streaming-plain-text">{message.content}</pre>
       )}
+      <MessageAttachments media={message.media} parts={message.parts} />
     </article>
   );
 }

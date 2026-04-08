@@ -54,6 +54,9 @@ These tests boot the backend with [`config/e2e.mock.env`](../config/e2e.mock.env
 - standard-user redirect away from `/admin`
 - streamed chat response in the new composer flow
 - async admin action flow without leaving the admin page
+- image upload staging and send
+- PDF upload staging and send
+- unsupported file rejection with a recoverable composer state
 
 ## Smoke test
 
@@ -71,6 +74,8 @@ The smoke script verifies:
 - session creation
 - non-streaming message send
 - session history retrieval
+
+For multimodal smoke checks, first upload a small PNG/PDF through `POST /v1/uploads`, then send a `parts` payload through `/v1/messages` or `/v1/messages:stream`.
 
 ## Closed-loop validation
 
@@ -115,3 +120,12 @@ Recommended validation flow:
 4. Run `smoke_test.py`.
 5. Run `load_test.py` with conservative settings.
 6. Inspect `/metrics`, `/admin`, and provider-call logs during the run.
+
+## Multimodal storage and cleanup checks
+
+Run these checks after enabling file uploads:
+
+- upload a supported image, PDF, and PPTX through `POST /v1/uploads`
+- verify `GET /v1/assets/{asset_id}` and `GET /v1/assets/{asset_id}/content`
+- run `py -m pytest tests/service/test_asset_api.py tests/service/test_asset_cleanup_service.py -q`
+- confirm `/metrics` exposes `gemini_service_asset_cleanup_runs_total`, `gemini_service_asset_expired_total`, and `gemini_service_asset_deleted_total`

@@ -5,6 +5,7 @@ import asyncio
 import pytest
 from gemini_webapi.exceptions import APIError, AuthError, TemporarilyBlocked, TimeoutError
 
+from gemini_service.adapters.base import TextPromptPart
 from gemini_service.adapters.mock import MockAccountAdapter
 from gemini_service.schemas.accounts import AccountConfig
 
@@ -23,7 +24,7 @@ def test_mock_adapter_healthy_probe_and_send():
     adapter = MockAccountAdapter(_config(mock_behavior="healthy"))
 
     probe = asyncio.run(adapter.probe())
-    result = asyncio.run(adapter.send_message(prompt="hello"))
+    result = asyncio.run(adapter.send_message(parts=[TextPromptPart(type="text", text="hello")]))
 
     assert probe.account_status == "AVAILABLE"
     assert result.text.startswith("[mock-1|healthy]")
@@ -47,13 +48,13 @@ def test_mock_adapter_timeout_send():
     adapter = MockAccountAdapter(_config(mock_behavior="send_timeout"))
 
     with pytest.raises(TimeoutError):
-        asyncio.run(adapter.send_message(prompt="hello"))
+        asyncio.run(adapter.send_message(parts=[TextPromptPart(type="text", text="hello")]))
 
 
 def test_mock_adapter_flaky_send():
     adapter = MockAccountAdapter(_config(mock_behavior="flaky"))
 
-    asyncio.run(adapter.send_message(prompt="one"))
-    asyncio.run(adapter.send_message(prompt="two"))
+    asyncio.run(adapter.send_message(parts=[TextPromptPart(type="text", text="one")]))
+    asyncio.run(adapter.send_message(parts=[TextPromptPart(type="text", text="two")]))
     with pytest.raises(APIError):
-        asyncio.run(adapter.send_message(prompt="three"))
+        asyncio.run(adapter.send_message(parts=[TextPromptPart(type="text", text="three")]))

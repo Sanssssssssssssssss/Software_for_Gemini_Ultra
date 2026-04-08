@@ -105,6 +105,18 @@ class ChatService:
 
         selection, record = await self._prepare_session_runtime(record)
         prompt_parts, user_part_records, effective_temporary = await self._resolve_prompt_parts(request, record, auth)
+        self.logger.info(
+            "provider_submit_started",
+            extra={
+                "event": "provider_submit_started",
+                "request_id": get_request_id(),
+                "session_id": record.id,
+                "owner_subject": auth.subject,
+                "account_id": selection.runtime.config.account_id,
+                "asset_count": sum(part.get("part_type") == "asset" for part in user_part_records),
+                "temporary": effective_temporary,
+            },
+        )
         lease = await self.pool.acquire(
             preferred_account_id=selection.runtime.config.account_id,
             require_preferred=True,
@@ -130,6 +142,17 @@ class ChatService:
                     duration_ms=(time.perf_counter() - started) * 1000,
                     auth=auth,
                     error=exc,
+                )
+                self.logger.warning(
+                    "provider_submit_failed",
+                    extra={
+                        "event": "provider_submit_failed",
+                        "request_id": get_request_id(),
+                        "session_id": record.id,
+                        "owner_subject": auth.subject,
+                        "account_id": runtime.config.account_id,
+                        "error_code": exc.code,
+                    },
                 )
                 raise
             else:
@@ -175,47 +198,73 @@ class ChatService:
 
     async def stream_message(self, request: MessageRequest, auth: AuthContext) -> AsyncIterator[str]:
         record = await self._require_session(request.session_id, auth)
-        cached = await self._maybe_get_cached_response(record, request.idempotency_key)
-        if cached is not None:
+        try:
+            cached = await self._maybe_get_cached_response(record, request.idempotency_key)
+            if cached is not None:
+                yield self._sse(
+                    "accepted",
+                    {
+                        "session_id": record.id,
+                        "account_id": record.account_id,
+                        "cached": True,
+                    },
+                )
+                yield self._sse("chunk", {"text_delta": cached.content, "cached": True})
+                yield self._sse("done", cached.model_dump(mode="json"))
+                return
+
+            selection, record = await self._prepare_session_runtime(record)
+            prompt_parts, user_part_records, effective_temporary = await self._resolve_prompt_parts(request, record, auth)
+            self.logger.info(
+                "provider_submit_started",
+                extra={
+                    "event": "provider_submit_started",
+                    "request_id": get_request_id(),
+                    "session_id": record.id,
+                    "owner_subject": auth.subject,
+                    "account_id": selection.runtime.config.account_id,
+                    "asset_count": sum(part.get("part_type") == "asset" for part in user_part_records),
+                    "temporary": effective_temporary,
+                    "stream": True,
+                },
+            )
             yield self._sse(
                 "accepted",
                 {
                     "session_id": record.id,
-                    "account_id": record.account_id,
-                    "cached": True,
-                },
-            )
-            yield self._sse("chunk", {"text_delta": cached.content, "cached": True})
-            yield self._sse("done", cached.model_dump(mode="json"))
-            return
-
-        selection, record = await self._prepare_session_runtime(record)
-        prompt_parts, user_part_records, effective_temporary = await self._resolve_prompt_parts(request, record, auth)
-        yield self._sse(
-            "accepted",
-            {
-                "session_id": record.id,
-                "account_id": selection.runtime.config.account_id,
-                "cached": False,
-                "failover_from": selection.failover_from,
-            },
-        )
-        if selection.failover_from is not None:
-            yield self._sse(
-                "status",
-                {
-                    "session_id": record.id,
                     "account_id": selection.runtime.config.account_id,
-                    "phase": "failover",
-                    "message": selection.reason or "Session rerouted to a healthy account.",
+                    "cached": False,
                     "failover_from": selection.failover_from,
                 },
             )
-        lease = await self.pool.acquire(
-            preferred_account_id=selection.runtime.config.account_id,
-            require_preferred=True,
-            allow_failover=False,
-        )
+            if selection.failover_from is not None:
+                yield self._sse(
+                    "status",
+                    {
+                        "session_id": record.id,
+                        "account_id": selection.runtime.config.account_id,
+                        "phase": "failover",
+                        "message": selection.reason or "Session rerouted to a healthy account.",
+                        "failover_from": selection.failover_from,
+                    },
+                )
+            lease = await self.pool.acquire(
+                preferred_account_id=selection.runtime.config.account_id,
+                require_preferred=True,
+                allow_failover=False,
+            )
+        except ServiceError as exc:
+            yield self._sse(
+                "error",
+                {
+                    "session_id": record.id,
+                    "account_id": record.account_id,
+                    "code": exc.code,
+                    "message": exc.message,
+                    "details": exc.details,
+                },
+            )
+            return
         accumulated_text = ""
         final_metadata = self._metadata_from_record(record)
         streamed_media_assets: list[MediaAssetRecord] = []
@@ -284,6 +333,18 @@ class ChatService:
                     duration_ms=(time.perf_counter() - started) * 1000,
                     auth=auth,
                     error=exc,
+                )
+                self.logger.warning(
+                    "provider_submit_failed",
+                    extra={
+                        "event": "provider_submit_failed",
+                        "request_id": get_request_id(),
+                        "session_id": record.id,
+                        "owner_subject": auth.subject,
+                        "account_id": runtime.config.account_id,
+                        "error_code": exc.code,
+                        "stream": True,
+                    },
                 )
                 yield self._sse(
                     "error",

@@ -24,14 +24,19 @@ class TelemetryService:
         self.account_queue_depth: dict[str, int] = defaultdict(int)
         self.account_in_flight: dict[str, int] = defaultdict(int)
         self.batch_status_counts: dict[str, int] = defaultdict(int)
+        self.asset_status_counts: dict[str, int] = defaultdict(int)
         self.session_failovers_total = 0
         self.batch_workers_active = 0
+        self.asset_cleanup_runs_total = 0
+        self.asset_expired_total = 0
+        self.asset_deleted_total = 0
         self.active_requests = 0
         self.account_ready = 0
         self.account_total = 0
         self.chat_sessions = 0
         self.chat_messages = 0
         self.chat_batches = 0
+        self.chat_assets = 0
         self.total_requests = 0
         self.total_errors = 0
 
@@ -72,12 +77,14 @@ class TelemetryService:
         sessions: int,
         messages: int,
         batches: int,
+        assets: int = 0,
     ) -> None:
         self.account_ready = ready_accounts
         self.account_total = total_accounts
         self.chat_sessions = sessions
         self.chat_messages = messages
         self.chat_batches = batches
+        self.chat_assets = assets
 
     def update_account_pool(self, accounts: list[AccountSummary]) -> None:
         self.account_state_counts = defaultdict(int)
@@ -91,6 +98,14 @@ class TelemetryService:
     def update_batch_runtime(self, batch_status_counts: dict[str, int], active_workers: int) -> None:
         self.batch_status_counts = defaultdict(int, batch_status_counts)
         self.batch_workers_active = active_workers
+
+    def update_asset_runtime(self, asset_status_counts: dict[str, int]) -> None:
+        self.asset_status_counts = defaultdict(int, asset_status_counts)
+
+    def record_asset_cleanup(self, *, expired_count: int, deleted_count: int) -> None:
+        self.asset_cleanup_runs_total += 1
+        self.asset_expired_total += expired_count
+        self.asset_deleted_total += deleted_count
 
     def render_prometheus(self) -> bytes:
         lines = [
@@ -174,6 +189,9 @@ class TelemetryService:
                 "# HELP gemini_service_chat_batches_total Number of persisted batch jobs.",
                 "# TYPE gemini_service_chat_batches_total gauge",
                 f"gemini_service_chat_batches_total {self.chat_batches}",
+                "# HELP gemini_service_chat_assets_total Number of persisted media assets.",
+                "# TYPE gemini_service_chat_assets_total gauge",
+                f"gemini_service_chat_assets_total {self.chat_assets}",
                 "# HELP gemini_service_account_states Number of accounts in each runtime state.",
                 "# TYPE gemini_service_account_states gauge",
             ]
@@ -210,12 +228,30 @@ class TelemetryService:
 
         lines.extend(
             [
+                "# HELP gemini_service_asset_status Number of assets in each status.",
+                "# TYPE gemini_service_asset_status gauge",
+            ]
+        )
+        for status, value in sorted(self.asset_status_counts.items()):
+            lines.append(f'gemini_service_asset_status{{status="{status}"}} {value}')
+
+        lines.extend(
+            [
                 "# HELP gemini_service_batch_workers_active Number of active in-process batch workers.",
                 "# TYPE gemini_service_batch_workers_active gauge",
                 f"gemini_service_batch_workers_active {self.batch_workers_active}",
                 "# HELP gemini_service_session_failovers_total Number of persisted session failovers.",
                 "# TYPE gemini_service_session_failovers_total counter",
                 f"gemini_service_session_failovers_total {self.session_failovers_total}",
+                "# HELP gemini_service_asset_cleanup_runs_total Number of asset cleanup passes.",
+                "# TYPE gemini_service_asset_cleanup_runs_total counter",
+                f"gemini_service_asset_cleanup_runs_total {self.asset_cleanup_runs_total}",
+                "# HELP gemini_service_asset_expired_total Number of expired assets removed from storage.",
+                "# TYPE gemini_service_asset_expired_total counter",
+                f"gemini_service_asset_expired_total {self.asset_expired_total}",
+                "# HELP gemini_service_asset_deleted_total Number of orphan assets deleted from storage.",
+                "# TYPE gemini_service_asset_deleted_total counter",
+                f"gemini_service_asset_deleted_total {self.asset_deleted_total}",
             ]
         )
 

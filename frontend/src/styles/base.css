@@ -695,6 +695,88 @@ button {
   border: 1px solid var(--surface-border);
 }
 
+.upload-dropzone {
+  display: grid;
+  gap: 6px;
+  padding: 14px 16px;
+  border: 1px dashed rgba(199, 111, 42, 0.36);
+  border-radius: var(--radius-md);
+  background: rgba(255, 255, 255, 0.55);
+  color: var(--ink-secondary);
+  transition:
+    transform var(--transition-fast),
+    border-color var(--transition-fast),
+    background-color var(--transition-fast);
+  cursor: pointer;
+}
+
+.upload-dropzone:hover {
+  transform: translateY(-1px);
+  border-color: rgba(199, 111, 42, 0.56);
+  background: rgba(255, 248, 239, 0.82);
+}
+
+.upload-queue,
+.message-attachments {
+  display: grid;
+  gap: 12px;
+}
+
+.upload-chip,
+.attachment-card,
+.generated-media-card {
+  display: grid;
+  gap: 10px;
+  padding: 14px;
+  border-radius: var(--radius-md);
+  border: 1px solid var(--surface-border);
+  background: rgba(255, 255, 255, 0.78);
+}
+
+.upload-chip.status-uploading {
+  border-color: rgba(199, 111, 42, 0.28);
+}
+
+.upload-chip.status-error,
+.upload-chip.status-cancelled {
+  border-color: rgba(179, 69, 50, 0.22);
+}
+
+.upload-chip__meta,
+.upload-chip__actions,
+.attachment-card__meta {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.upload-chip__meta span,
+.attachment-card__meta span {
+  color: var(--ink-secondary);
+  font-size: 0.84rem;
+}
+
+.upload-chip__preview,
+.attachment-image {
+  width: min(220px, 100%);
+  max-height: 220px;
+  object-fit: cover;
+  border-radius: var(--radius-md);
+  border: 1px solid var(--surface-border);
+}
+
+.attachment-file-link,
+.attachment-image-link,
+.generated-media-card {
+  color: var(--accent-primary-deep);
+}
+
+.generated-media-card {
+  width: fit-content;
+}
+
 .composer-input {
   min-height: 112px;
   resize: vertical;
@@ -738,7 +820,7 @@ button {
 
 .admin-summary-grid {
   display: grid;
-  grid-template-columns: repeat(4, minmax(0, 1fr));
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
 }
 
 .metric-card,

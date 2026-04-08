@@ -200,6 +200,11 @@ export function AdminPage() {
               <strong>{overview.telemetry.chat_sessions}</strong>
               <p>{overview.telemetry.chat_messages} messages stored.</p>
             </article>
+            <article className="metric-card">
+              <span>Stored Assets</span>
+              <strong>{overview.telemetry.chat_assets}</strong>
+              <p>{overview.telemetry.asset_expired_total} expired, {overview.telemetry.asset_deleted_total} orphan deletions.</p>
+            </article>
             <article className="metric-card danger">
               <span>Failures</span>
               <strong>{overview.telemetry.total_errors}</strong>
@@ -341,6 +346,41 @@ export function AdminPage() {
               The admin view stays read-mostly. Account actions are explicit and async, while batch
               and deeper maintenance workflows remain in the backend APIs.
             </p>
+          </section>
+
+          <section className="panel-surface admin-panel stack-md">
+            <div className="section-head">
+              <div>
+                <span className="eyebrow">Assets</span>
+                <h2>Recent file activity</h2>
+              </div>
+            </div>
+            <div className="state-chip-grid">
+              {Object.entries(overview.telemetry.asset_status_counts).map(([state, count]) => (
+                <div className="state-chip" key={state}>
+                  <span>{state}</span>
+                  <strong>{count}</strong>
+                </div>
+              ))}
+            </div>
+            <div className="admin-session-list">
+              {overview.assets.length ? (
+                overview.assets.map((asset) => (
+                  <div className="admin-session-row" key={asset.asset_id}>
+                    <div>
+                      <strong>{asset.filename}</strong>
+                      <p>{asset.owner_subject} · {asset.mime_type}</p>
+                    </div>
+                    <div className="admin-session-row__meta">
+                      <span className={`status-pill compact state-badge state-${asset.status}`}>{asset.status}</span>
+                      <small>{formatTimestamp(asset.expires_at || asset.created_at)}</small>
+                    </div>
+                  </div>
+                ))
+              ) : (
+                <div className="rail-empty">No recent assets yet.</div>
+              )}
+            </div>
           </section>
         </aside>
       </section>

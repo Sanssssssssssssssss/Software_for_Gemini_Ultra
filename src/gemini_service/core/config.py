@@ -48,6 +48,8 @@ class Settings(BaseSettings):
     asset_max_upload_bytes: int = 40 * 1024 * 1024
     asset_default_ttl_hours: int = 24
     asset_max_files_per_message: int = 5
+    asset_cleanup_interval_seconds: int = 300
+    asset_orphan_grace_hours: int = 1
     asset_allowed_mime_types: str = (
         "image/png,image/jpeg,image/webp,application/pdf,"
         "application/vnd.openxmlformats-officedocument.presentationml.presentation"

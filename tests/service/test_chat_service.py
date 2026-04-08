@@ -300,3 +300,43 @@ def test_chat_service_can_fail_over_when_session_allows_it(tmp_path):
     assert record is not None
     assert record.account_id == "acc-2"
     assert len(history.items) == 2
+
+
+def test_stream_message_returns_error_event_when_sticky_account_is_unavailable(tmp_path):
+    settings = _build_settings(
+        tmp_path,
+        [
+            {"account_id": "acc-1", "secure_1psid": "cookie-a"},
+            {"account_id": "acc-2", "secure_1psid": "cookie-b"},
+        ],
+    )
+    adapters = {
+        "acc-1": FakeChatAdapter("acc-1"),
+        "acc-2": FakeChatAdapter("acc-2"),
+    }
+    pool = AccountPool(settings, adapter_factory=lambda config: adapters[config.account_id])
+    repo = ChatRepository(settings.database_url)
+    asset_service = AssetService(settings=settings, repository=repo, storage=LocalAssetStorage(str(tmp_path / "assets")))
+
+    async def scenario():
+        await repo.start()
+        await pool.start()
+        service = ChatService(pool=pool, repository=repo, asset_service=asset_service)
+        session = await service.create_session(SessionCreateRequest(account_id="acc-1", allow_failover=False), auth=ADMIN)
+
+        runtime = pool.get_runtime("acc-1")
+        assert runtime is not None
+        pool.record_provider_failure(
+            runtime,
+            ServiceError(status_code=503, code="provider_blocked", message="blocked"),
+        )
+
+        events = [event async for event in service.stream_message(MessageRequest(session_id=session.session_id, message="hello"), auth=ADMIN)]
+        await repo.close()
+        await pool.close()
+        return events
+
+    events = _run(scenario())
+    assert len(events) == 1
+    assert "event: error" in events[0]
+    assert "preferred_account_unavailable" in events[0]

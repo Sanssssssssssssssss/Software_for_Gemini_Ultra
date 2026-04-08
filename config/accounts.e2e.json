@@ -1,0 +1,18 @@
+{
+  "accounts": [
+    {
+      "account_id": "mock-ready-1",
+      "provider_backend": "mock",
+      "mock_behavior": "healthy",
+      "mock_delay_ms": 20,
+      "mock_models": ["gemini-3-pro", "gemini-3-flash"],
+      "enabled": true,
+      "secure_1psid": "mock-cookie",
+      "secure_1psidts": "mock-cookie-ts",
+      "max_concurrency": 2,
+      "cooldown_seconds": 10,
+      "request_timeout_seconds": 30,
+      "tags": ["mock", "ready", "e2e"]
+    }
+  ]
+}

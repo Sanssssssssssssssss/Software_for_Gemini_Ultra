@@ -22,6 +22,7 @@ from .core.telemetry import TelemetryService
 from .db.repository import ChatRepository
 from .schemas.common import ApiError, ErrorResponse
 from .services.account_pool import AccountPool
+from .services.asset_cleanup_service import AssetCleanupService
 from .services.asset_service import AssetService
 from .services.batch_service import BatchService
 from .services.chat_service import ChatService
@@ -44,6 +45,14 @@ async def lifespan(app: FastAPI):
         storage=asset_storage,
     )
     app.state.asset_service = asset_service
+    asset_cleanup_service = AssetCleanupService(
+        settings=settings,
+        repository=repository,
+        storage=asset_storage,
+        telemetry=app.state.telemetry,
+    )
+    await asset_cleanup_service.start()
+    app.state.asset_cleanup_service = asset_cleanup_service
     chat_service = ChatService(
         pool=pool,
         repository=repository,
@@ -68,6 +77,7 @@ async def lifespan(app: FastAPI):
     try:
         yield
     finally:
+        await asset_cleanup_service.close()
         await batch_service.close()
         await repository.close()
         await pool.close()

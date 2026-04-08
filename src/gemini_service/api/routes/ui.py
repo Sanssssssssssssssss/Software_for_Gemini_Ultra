@@ -268,8 +268,10 @@ async def admin_page(
         sessions=len(sessions),
         messages=await chat_service.repository.count_messages(),
         batches=await chat_service.repository.count_batches(),
+        assets=await chat_service.repository.count_assets(),
     )
     telemetry.update_account_pool(await pool.list_account_summaries(force_refresh=True))
+    telemetry.update_asset_runtime(await chat_service.repository.count_assets_by_status())
     return _templates(request).TemplateResponse(
         request,
         "admin.html",
@@ -325,11 +327,27 @@ async def ui_admin_overview(
         sessions=len(sessions),
         messages=await chat_service.repository.count_messages(),
         batches=await chat_service.repository.count_batches(),
+        assets=await chat_service.repository.count_assets(),
     )
     telemetry.update_account_pool(accounts)
+    telemetry.update_asset_runtime(await chat_service.repository.count_assets_by_status())
+    recent_assets = await chat_service.repository.list_recent_assets(limit=20)
     return {
         "accounts": accounts,
         "sessions": sessions,
+        "assets": [
+            {
+                "asset_id": asset.id,
+                "owner_subject": asset.owner_subject,
+                "filename": asset.filename,
+                "mime_type": asset.mime_type,
+                "size_bytes": asset.size_bytes,
+                "status": asset.status,
+                "created_at": asset.created_at.isoformat() if asset.created_at else None,
+                "expires_at": asset.expires_at.isoformat() if asset.expires_at else None,
+            }
+            for asset in recent_assets
+        ],
         "telemetry": {
             "total_requests": telemetry.total_requests,
             "total_errors": telemetry.total_errors,
@@ -339,11 +357,16 @@ async def ui_admin_overview(
             "chat_sessions": telemetry.chat_sessions,
             "chat_messages": telemetry.chat_messages,
             "chat_batches": telemetry.chat_batches,
+            "chat_assets": telemetry.chat_assets,
             "batch_workers_active": telemetry.batch_workers_active,
             "session_failovers_total": telemetry.session_failovers_total,
             "account_state_counts": dict(telemetry.account_state_counts),
             "account_queue_depth": dict(telemetry.account_queue_depth),
             "account_in_flight": dict(telemetry.account_in_flight),
+            "asset_status_counts": dict(telemetry.asset_status_counts),
+            "asset_cleanup_runs_total": telemetry.asset_cleanup_runs_total,
+            "asset_expired_total": telemetry.asset_expired_total,
+            "asset_deleted_total": telemetry.asset_deleted_total,
         },
     }
 
@@ -480,6 +503,12 @@ async def ui_get_asset_content(
     asset_service: AssetService = Depends(get_asset_service),
 ):
     asset = await asset_service.get_asset_for_read(asset_id=asset_id, auth=auth)
+    if asset.status != "available":
+        raise ServiceError(
+            status_code=409,
+            code="asset_not_available",
+            message="The requested asset is not available for download.",
+        )
     path = asset_service.resolve_asset_path(asset)
     return FileResponse(path, media_type=asset.mime_type, filename=asset.filename)
 

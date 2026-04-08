@@ -290,6 +290,28 @@ class ChatRepository:
             result = await db.execute(select(BatchRecord))
             return len(list(result.scalars()))
 
+    async def count_assets(self) -> int:
+        async with self._session() as db:
+            result = await db.execute(select(MediaAssetRecord))
+            return len(list(result.scalars()))
+
+    async def count_assets_by_status(self) -> dict[str, int]:
+        async with self._session() as db:
+            result = await db.execute(select(MediaAssetRecord))
+            counts: dict[str, int] = {}
+            for record in result.scalars():
+                counts[record.status] = counts.get(record.status, 0) + 1
+            return counts
+
+    async def list_recent_assets(self, limit: int = 20) -> list[MediaAssetRecord]:
+        async with self._session() as db:
+            result = await db.execute(
+                select(MediaAssetRecord)
+                .order_by(MediaAssetRecord.created_at.desc())
+                .limit(limit)
+            )
+            return list(result.scalars())
+
     async def count_batches_by_status(self) -> dict[str, int]:
         async with self._session() as db:
             result = await db.execute(select(BatchRecord))
@@ -297,6 +319,58 @@ class ChatRepository:
             for record in result.scalars():
                 counts[record.status] = counts.get(record.status, 0) + 1
             return counts
+
+    async def list_expired_assets(self, now: datetime, limit: int = 100) -> list[MediaAssetRecord]:
+        async with self._session() as db:
+            result = await db.execute(
+                select(MediaAssetRecord)
+                .where(
+                    MediaAssetRecord.expires_at.is_not(None),
+                    MediaAssetRecord.expires_at <= now,
+                    MediaAssetRecord.status.in_(("available", "failed")),
+                )
+                .order_by(MediaAssetRecord.expires_at.asc())
+                .limit(limit)
+            )
+            return list(result.scalars())
+
+    async def list_orphan_assets(self, older_than: datetime, limit: int = 100) -> list[MediaAssetRecord]:
+        async with self._session() as db:
+            result = await db.execute(
+                select(MediaAssetRecord)
+                .where(
+                    MediaAssetRecord.session_id.is_(None),
+                    MediaAssetRecord.message_id.is_(None),
+                    MediaAssetRecord.expires_at.is_(None),
+                    MediaAssetRecord.created_at <= older_than,
+                    MediaAssetRecord.status == "available",
+                )
+                .order_by(MediaAssetRecord.created_at.asc())
+                .limit(limit)
+            )
+            return list(result.scalars())
+
+    async def mark_asset_status(
+        self,
+        *,
+        asset_id: str,
+        status: str,
+        clear_storage: bool = False,
+        metadata_updates: dict | None = None,
+    ) -> MediaAssetRecord | None:
+        async with self._session() as db:
+            record = await db.get(MediaAssetRecord, asset_id)
+            if record is None:
+                return None
+            record.status = status
+            metadata = self._load_metadata(record.metadata_json)
+            metadata.update(metadata_updates or {})
+            record.metadata_json = self._dump_metadata(metadata)
+            if clear_storage:
+                record.storage_uri = ""
+            await db.commit()
+            await db.refresh(record)
+            return record
 
     async def get_cached_assistant_message(
         self,

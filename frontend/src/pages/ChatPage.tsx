@@ -6,8 +6,12 @@ import { MessageBubble, type UiMessage } from "../components/MessageBubble";
 import { SessionRail, type SessionPreview } from "../components/SessionRail";
 import {
   type AccountSummary,
+  type AssetSummary,
   ApiError,
+  buildUiAssetContentUrl,
   type SessionSummary,
+  type MessageResponsePart,
+  type MessageMedia,
   createSession,
   getChatBootstrap,
   getMe,
@@ -15,6 +19,7 @@ import {
   logout,
   sendMessage,
   streamMessage,
+  uploadAsset,
   type UiMe,
 } from "../lib/api";
 import { consumeEventStream } from "../lib/streaming";
@@ -46,14 +51,37 @@ function buildSessionPreview(messages: UiMessage[], fallback: string): SessionPr
   };
 }
 
-function mapHistoryToMessages(items: Array<{ role: "user" | "assistant" | "system"; content: string; created_at: string | null }>) {
+function mapHistoryToMessages(
+  items: Array<{
+    role: "user" | "assistant" | "system";
+    content: string;
+    parts: MessageResponsePart[];
+    media: MessageMedia[];
+    created_at: string | null;
+  }>,
+) {
   return items.map<UiMessage>((item, index) => ({
     id: `${item.role}-${item.created_at ?? index}`,
     role: item.role,
     content: item.content,
+    parts: item.parts,
+    media: item.media,
     createdAt: item.created_at,
   }));
 }
+
+type PendingUploadStatus = "uploading" | "ready" | "error" | "cancelled";
+
+type PendingUpload = {
+  localId: string;
+  file: File;
+  status: PendingUploadStatus;
+  progress: number;
+  asset?: AssetSummary;
+  error?: string;
+  previewUrl?: string;
+  abortController?: AbortController | null;
+};
 
 export function ChatPage() {
   const navigate = useNavigate();
@@ -70,13 +98,16 @@ export function ChatPage() {
   const [temporaryMode, setTemporaryMode] = useState(false);
   const [allowFailover, setAllowFailover] = useState(false);
   const [pinnedAccountId, setPinnedAccountId] = useState("");
+  const [pendingUploads, setPendingUploads] = useState<PendingUpload[]>([]);
   const [chatStatus, setChatStatus] = useState<ChatStatus>(null);
   const [isSending, setIsSending] = useState(false);
   const [isStreaming, setIsStreaming] = useState(false);
   const [isAtBottom, setIsAtBottom] = useState(true);
 
   const messageViewportRef = useRef<HTMLDivElement | null>(null);
+  const fileInputRef = useRef<HTMLInputElement | null>(null);
   const abortControllerRef = useRef<AbortController | null>(null);
+  const pendingUploadsRef = useRef<PendingUpload[]>([]);
   const streamBufferRef = useRef("");
   const streamMessageIdRef = useRef<string | null>(null);
   const streamSessionIdRef = useRef<string | null>(null);
@@ -128,6 +159,20 @@ export function ChatPage() {
       }
     };
   }, [navigate]);
+
+  useEffect(() => {
+    pendingUploadsRef.current = pendingUploads;
+  }, [pendingUploads]);
+
+  useEffect(() => {
+    return () => {
+      pendingUploadsRef.current.forEach((upload) => {
+        if (upload.previewUrl) {
+          URL.revokeObjectURL(upload.previewUrl);
+        }
+      });
+    };
+  }, []);
 
   useEffect(() => {
     if (!isAtBottom || !messageViewportRef.current) {
@@ -193,6 +238,97 @@ export function ChatPage() {
         },
       }));
     }
+  }
+
+  function enqueueFiles(fileList: FileList | File[]) {
+    const nextFiles = Array.from(fileList);
+    if (!nextFiles.length) {
+      return;
+    }
+
+    setTemporaryMode((current) => current || true);
+
+    nextFiles.forEach((file) => {
+      const localId = crypto.randomUUID();
+      const previewUrl = file.type.startsWith("image/") ? URL.createObjectURL(file) : undefined;
+      const controller = new AbortController();
+      const initialUpload: PendingUpload = {
+        localId,
+        file,
+        status: "uploading",
+        progress: 0,
+        previewUrl,
+        abortController: controller,
+      };
+      setPendingUploads((current) => [...current, initialUpload]);
+
+      void uploadAsset(file, {
+        temporary: true,
+        signal: controller.signal,
+        onProgress: (progress) => {
+          setPendingUploads((current) =>
+            current.map((item) => (item.localId === localId ? { ...item, progress } : item)),
+          );
+        },
+      })
+        .then(({ asset }) => {
+          setPendingUploads((current) =>
+            current.map((item) =>
+              item.localId === localId
+                ? {
+                    ...item,
+                    status: "ready",
+                    progress: 100,
+                    asset,
+                    abortController: null,
+                  }
+                : item,
+            ),
+          );
+          setChatStatus({
+            tone: "info",
+            message: `${file.name} uploaded to the workspace. It will not be sent until you submit the message.`,
+          });
+        })
+        .catch((error) => {
+          const isAbort = error instanceof DOMException && error.name === "AbortError";
+          setPendingUploads((current) =>
+            current.map((item) =>
+              item.localId === localId
+                ? {
+                    ...item,
+                    status: isAbort ? "cancelled" : "error",
+                    error: isAbort ? "Upload cancelled." : error instanceof Error ? error.message : "Upload failed.",
+                    abortController: null,
+                  }
+                : item,
+            ),
+          );
+        });
+    });
+  }
+
+  function retryUpload(localId: string) {
+    const target = pendingUploads.find((item) => item.localId === localId);
+    if (!target) {
+      return;
+    }
+    if (target.previewUrl) {
+      URL.revokeObjectURL(target.previewUrl);
+    }
+    setPendingUploads((current) => current.filter((item) => item.localId !== localId));
+    enqueueFiles([target.file]);
+  }
+
+  function removeUpload(localId: string) {
+    setPendingUploads((current) => {
+      const target = current.find((item) => item.localId === localId);
+      target?.abortController?.abort();
+      if (target?.previewUrl) {
+        URL.revokeObjectURL(target.previewUrl);
+      }
+      return current.filter((item) => item.localId !== localId);
+    });
   }
 
   async function handleCreateSession(selectAfterCreate = true) {
@@ -274,7 +410,9 @@ export function ChatPage() {
 
   async function handleSendMessage() {
     const trimmed = composerValue.trim();
-    if (!trimmed || isSending || !me) {
+    const readyUploads = pendingUploads.filter((item) => item.status === "ready" && item.asset);
+    const hasUploading = pendingUploads.some((item) => item.status === "uploading");
+    if ((!trimmed && !readyUploads.length) || isSending || !me || hasUploading) {
       return;
     }
 
@@ -298,7 +436,11 @@ export function ChatPage() {
       const userMessage: UiMessage = {
         id: crypto.randomUUID(),
         role: "user",
-        content: trimmed,
+        content: trimmed || "[Attachment message]",
+        parts: [
+          ...(trimmed ? [{ type: "text", text: trimmed } satisfies MessageResponsePart] : []),
+          ...readyUploads.map((upload) => ({ type: "asset", asset: upload.asset! } satisfies MessageResponsePart)),
+        ],
         createdAt: new Date().toISOString(),
       };
       const assistantMessageId = crypto.randomUUID();
@@ -324,20 +466,31 @@ export function ChatPage() {
       if (!streamEnabled) {
         const response = await sendMessage({
           session_id: sessionId,
-          message: trimmed,
+          ...(readyUploads.length
+            ? {
+                parts: [
+                  ...(trimmed ? [{ type: "text" as const, text: trimmed }] : []),
+                  ...readyUploads.map((upload) => ({ type: "asset" as const, asset_id: upload.asset!.asset_id })),
+                ],
+                message: null,
+              }
+            : { message: trimmed }),
           stream: false,
-          temporary: temporaryMode,
+          temporary: readyUploads.length ? true : temporaryMode,
           idempotency_key: crypto.randomUUID(),
         });
         startTransition(() => {
           updateMessage(sessionId, assistantMessageId, (message) => ({
             ...message,
             content: response.content,
+            parts: response.parts,
+            media: response.media,
             isStreaming: false,
             isThinking: false,
             createdAt: response.created_at,
           }));
         });
+        clearPendingUploads();
         setChatStatus({
           tone: "success",
           message: "Reply received.",
@@ -355,13 +508,22 @@ export function ChatPage() {
       const response = await streamMessage(
         {
           session_id: sessionId,
-          message: trimmed,
+          ...(readyUploads.length
+            ? {
+                parts: [
+                  ...(trimmed ? [{ type: "text" as const, text: trimmed }] : []),
+                  ...readyUploads.map((upload) => ({ type: "asset" as const, asset_id: upload.asset!.asset_id })),
+                ],
+                message: null,
+              }
+            : { message: trimmed }),
           stream: true,
-          temporary: temporaryMode,
+          temporary: readyUploads.length ? true : temporaryMode,
           idempotency_key: crypto.randomUUID(),
         },
         controller.signal,
       );
+      clearPendingUploads();
 
       await consumeEventStream(response, async (event) => {
         if (event.type === "accepted") {
@@ -400,6 +562,22 @@ export function ChatPage() {
           return;
         }
 
+        if (event.type === "media") {
+          updateMessage(sessionId, assistantMessageId, (message) => ({
+            ...message,
+            media: [
+              ...(message.media || []),
+              {
+                ...event.payload.asset,
+                asset_id: event.payload.asset.asset_id,
+                media_type: "image",
+                content_url: buildUiAssetContentUrl(event.payload.asset.asset_id),
+              },
+            ],
+          }));
+          return;
+        }
+
         if (event.type === "error") {
           if (rafRef.current !== null) {
             window.cancelAnimationFrame(rafRef.current);
@@ -429,6 +607,8 @@ export function ChatPage() {
             updateMessage(sessionId, assistantMessageId, (message) => ({
               ...message,
               content: event.payload.content,
+              parts: event.payload.parts,
+              media: event.payload.media,
               isStreaming: false,
               isThinking: false,
               createdAt: event.payload.created_at,
@@ -478,6 +658,18 @@ export function ChatPage() {
     abortControllerRef.current?.abort();
   }
 
+  function clearPendingUploads() {
+    setPendingUploads((current) => {
+      current.forEach((item) => {
+        item.abortController?.abort();
+        if (item.previewUrl) {
+          URL.revokeObjectURL(item.previewUrl);
+        }
+      });
+      return [];
+    });
+  }
+
   function handleViewportScroll() {
     if (!messageViewportRef.current) {
       return;
@@ -489,6 +681,7 @@ export function ChatPage() {
 
   const selectedMessages = selectedSessionId ? sessionMessages[selectedSessionId] || [] : [];
   const selectedSession = sessions.find((session) => session.session_id === selectedSessionId) || null;
+  const hasUploadingAttachments = pendingUploads.some((item) => item.status === "uploading");
 
   if (!me && loadingBootstrap) {
     return (
@@ -624,12 +817,83 @@ export function ChatPage() {
           ) : null}
 
           <div className="composer-card">
+            <input
+              accept=".png,.jpg,.jpeg,.webp,.pdf,.pptx"
+              hidden
+              multiple
+              onChange={(event) => {
+                if (event.target.files?.length) {
+                  enqueueFiles(event.target.files);
+                  event.target.value = "";
+                }
+              }}
+              ref={fileInputRef}
+              type="file"
+            />
+            <div
+              className="upload-dropzone"
+              data-testid="upload-dropzone"
+              onClick={() => fileInputRef.current?.click()}
+              onDragOver={(event) => {
+                event.preventDefault();
+              }}
+              onDrop={(event) => {
+                event.preventDefault();
+                if (event.dataTransfer.files?.length) {
+                  enqueueFiles(event.dataTransfer.files);
+                }
+              }}
+            >
+              <strong>Attach files</strong>
+              <span>Click to browse, drag files in, or paste an image into the composer.</span>
+            </div>
+            {pendingUploads.length ? (
+              <div className="upload-queue" data-testid="upload-queue">
+                {pendingUploads.map((upload) => (
+                  <article className={`upload-chip status-${upload.status}`} key={upload.localId}>
+                    <div className="upload-chip__meta">
+                      <strong>{upload.asset?.filename || upload.file.name}</strong>
+                      <span>
+                        {upload.status === "uploading"
+                          ? `Uploading ${upload.progress}%`
+                          : upload.status === "ready"
+                            ? "Ready to send"
+                            : upload.error || "Upload cancelled"}
+                      </span>
+                    </div>
+                    {upload.previewUrl ? (
+                      <img alt={upload.file.name} className="upload-chip__preview" src={upload.previewUrl} />
+                    ) : null}
+                    <div className="upload-chip__actions">
+                      {upload.status === "error" || upload.status === "cancelled" ? (
+                        <button className="secondary-link compact-link button-reset" type="button" onClick={() => retryUpload(upload.localId)}>
+                          Retry
+                        </button>
+                      ) : null}
+                      <button className="secondary-link compact-link button-reset" type="button" onClick={() => removeUpload(upload.localId)}>
+                        {upload.status === "uploading" ? "Cancel" : "Remove"}
+                      </button>
+                    </div>
+                  </article>
+                ))}
+              </div>
+            ) : null}
             <label className="field">
               <span>Message</span>
               <textarea
                 className="composer-input"
                 data-testid="chat-composer"
                 onChange={(event) => setComposerValue(event.target.value)}
+                onPaste={(event) => {
+                  const items = Array.from(event.clipboardData?.items || []);
+                  const imageFiles = items
+                    .map((item) => (item.kind === "file" ? item.getAsFile() : null))
+                    .filter((item): item is File => !!item && item.type.startsWith("image/"));
+                  if (imageFiles.length) {
+                    event.preventDefault();
+                    enqueueFiles(imageFiles);
+                  }
+                }}
                 placeholder="Ask Gemini something useful. Streaming stays enabled by default."
                 value={composerValue}
               />
@@ -662,7 +926,7 @@ export function ChatPage() {
                 <button
                   className="primary-button"
                   data-testid="chat-send"
-                  disabled={!composerValue.trim() || isSending}
+                  disabled={(!composerValue.trim() && !pendingUploads.some((item) => item.status === "ready")) || isSending || hasUploadingAttachments}
                   type="button"
                   onClick={() => {
                     void handleSendMessage();

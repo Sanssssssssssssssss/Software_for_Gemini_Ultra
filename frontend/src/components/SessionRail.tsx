@@ -42,7 +42,7 @@ export function SessionRail({
         conversation without reloading the full rail.
       </div>
       <div className="session-rail-list">
-        {isLoading ? <div className="rail-empty">Loading sessions…</div> : null}
+        {isLoading ? <div className="rail-empty">Loading sessions...</div> : null}
         {!isLoading && !sessions.length ? <div className="rail-empty">No sessions yet.</div> : null}
         {!isLoading
           ? sessions.map((session) => {

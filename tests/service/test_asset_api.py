@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+from io import BytesIO
+from zipfile import ZipFile
+
 
 PNG_BYTES = (
     b"\x89PNG\r\n\x1a\n"
@@ -7,6 +10,18 @@ PNG_BYTES = (
     b"\x90wS\xde\x00\x00\x00\x0cIDAT\x08\x99c``\x00\x00\x00\x04\x00\x01"
     b"\x0b\xe7\x02\x9d\x00\x00\x00\x00IEND\xaeB`\x82"
 )
+
+
+def build_minimal_pptx() -> bytes:
+    buffer = BytesIO()
+    with ZipFile(buffer, "w") as archive:
+        archive.writestr("[Content_Types].xml", """
+<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types">
+  <Override PartName="/ppt/presentation.xml" ContentType="application/vnd.openxmlformats-officedocument.presentationml.presentation.main+xml"/>
+</Types>
+""".strip())
+        archive.writestr("ppt/presentation.xml", "<p:presentation xmlns:p='http://schemas.openxmlformats.org/presentationml/2006/main' />")
+    return buffer.getvalue()
 
 
 def test_upload_asset_and_enforce_permissions(client_factory):
@@ -43,3 +58,41 @@ def test_upload_asset_and_enforce_permissions(client_factory):
         )
         assert content_response.status_code == 200
         assert content_response.headers["content-type"].startswith("image/png")
+
+
+def test_upload_rejects_unsupported_type(client_factory):
+    with client_factory(
+        GEMINI_SERVICE_REQUIRE_AUTH="true",
+        GEMINI_SERVICE_API_TOKENS="alice|token-a|user",
+    ) as client:
+        response = client.post(
+            "/v1/uploads",
+            headers={"Authorization": "Bearer token-a"},
+            files={"file": ("notes.txt", b"hello", "text/plain")},
+            data={"temporary": "true"},
+        )
+
+        assert response.status_code == 415
+        assert response.json()["error"]["code"] == "asset_type_not_supported"
+
+
+def test_upload_accepts_pptx(client_factory):
+    with client_factory(
+        GEMINI_SERVICE_REQUIRE_AUTH="true",
+        GEMINI_SERVICE_API_TOKENS="alice|token-a|user",
+    ) as client:
+        response = client.post(
+            "/v1/uploads",
+            headers={"Authorization": "Bearer token-a"},
+            files={
+                "file": (
+                    "slides.pptx",
+                    build_minimal_pptx(),
+                    "application/vnd.openxmlformats-officedocument.presentationml.presentation",
+                )
+            },
+            data={"temporary": "true"},
+        )
+
+        assert response.status_code == 200
+        assert response.json()["asset"]["mime_type"] == "application/vnd.openxmlformats-officedocument.presentationml.presentation"

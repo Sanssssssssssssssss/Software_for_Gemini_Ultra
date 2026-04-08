@@ -8,6 +8,38 @@
 - `/admin`: account pool and recent session visibility
 - `POST /v1/admin/accounts/{account_id}/actions/{action}`: admin-only runtime actions
 - `POST /v1/batches`: persisted background batch execution
+- `POST /v1/uploads`: controlled asset ingest for multimodal requests
+- `GET /v1/assets/{asset_id}`: asset metadata and ownership checks
+
+## Incident: upload succeeds locally but message send fails
+
+Likely causes:
+
+- provider rejected the file after local upload
+- session ownership mismatch
+- file count or MIME policy violation
+
+Actions:
+
+1. Inspect application logs for `upload_completed`, `provider_submit_started`, and `provider_submit_failed`.
+2. Verify the asset still shows `status=available` through `GET /v1/assets/{asset_id}`.
+3. Confirm the same `owner_subject` is sending the message and reading the session.
+4. If the upload is no longer needed, allow TTL cleanup or delete the orphaned asset from storage during maintenance.
+
+## Incident: asset download returns `asset_not_available`
+
+Likely causes:
+
+- asset expired by TTL cleanup
+- orphan cleanup removed an unbound upload
+- operator manually removed the file from storage
+
+Actions:
+
+1. Check `/admin` recent file activity and `/metrics` asset cleanup counters.
+2. Confirm whether the asset `expires_at` timestamp has elapsed.
+3. Ask the user to upload the file again if the asset was intentionally temporary.
+4. If cleanup happened too aggressively, increase `GEMINI_SERVICE_ASSET_TTL_HOURS` or `GEMINI_SERVICE_ASSET_ORPHAN_GRACE_HOURS`.
 
 ## Incident: account shows `reauth_required`
 
@@ -70,6 +102,15 @@ Actions:
 2. Check `/metrics` for total errors and request latency growth.
 3. Verify database reachability.
 4. Run a reduced-scope smoke test before restoring load.
+
+## Incident: asset storage growth is accelerating
+
+Actions:
+
+1. Inspect recent assets in `/admin` and look for repeated large PDFs/PPTX files.
+2. Confirm the cleanup worker is running by checking `gemini_service_asset_cleanup_runs_total`.
+3. Review `gemini_service_asset_expired_total` and `gemini_service_asset_deleted_total`.
+4. Tighten TTLs for temporary assets or move the storage root to larger dedicated disk.
 
 ## Incident: database unavailable
 

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import io
+import logging
 import zipfile
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
@@ -37,6 +38,7 @@ class AssetService:
         self.settings = settings
         self.repository = repository
         self.storage = storage
+        self.logger = logging.getLogger("gemini_service.assets")
 
     async def create_upload(
         self,
@@ -47,6 +49,13 @@ class AssetService:
         metadata: dict | None = None,
     ) -> MediaAssetRecord:
         validated = await self._validate_upload(upload)
+        self._log_asset_event(
+            "upload_started",
+            owner_subject=auth.subject,
+            filename=validated.filename,
+            mime_type=validated.mime_type,
+            details={"temporary": temporary, "size_bytes": validated.size_bytes},
+        )
         asset = await self.repository.create_asset(
             owner_subject=auth.subject,
             filename=validated.filename,
@@ -77,9 +86,25 @@ class AssetService:
                     code="asset_store_failed",
                     message="Asset persisted to storage but could not be finalized in metadata.",
                 )
+            self._log_asset_event(
+                "upload_completed",
+                asset_id=updated.id,
+                owner_subject=updated.owner_subject,
+                filename=updated.filename,
+                mime_type=updated.mime_type,
+                details={"temporary": temporary, "size_bytes": updated.size_bytes},
+            )
             return updated
         except Exception as exc:
             await self.repository.mark_asset_failed(asset.id, str(exc))
+            self._log_asset_event(
+                "upload_failed",
+                asset_id=asset.id,
+                owner_subject=auth.subject,
+                filename=validated.filename,
+                mime_type=validated.mime_type,
+                details={"error": str(exc)},
+            )
             raise
 
     async def create_generated_asset(
@@ -125,6 +150,14 @@ class AssetService:
                     code="asset_store_failed",
                     message="Generated media persisted to storage but metadata finalization failed.",
                 )
+            self._log_asset_event(
+                "media_generated",
+                asset_id=updated.id,
+                owner_subject=updated.owner_subject,
+                filename=updated.filename,
+                mime_type=updated.mime_type,
+                details={"provider_ref": provider_ref or "", "size_bytes": updated.size_bytes},
+            )
             return updated
         except Exception as exc:
             await self.repository.mark_asset_failed(asset.id, str(exc))
@@ -229,3 +262,25 @@ class AssetService:
                 return b"presentationml.presentation.main+xml" in content_types
         except zipfile.BadZipFile:
             return False
+
+    def _log_asset_event(
+        self,
+        event: str,
+        *,
+        asset_id: str | None = None,
+        owner_subject: str,
+        filename: str,
+        mime_type: str,
+        details: dict | None = None,
+    ) -> None:
+        self.logger.info(
+            event,
+            extra={
+                "event": event,
+                "asset_id": asset_id or "",
+                "owner_subject": owner_subject,
+                "asset_filename": filename,
+                "mime_type": mime_type,
+                "details": details or {},
+            },
+        )

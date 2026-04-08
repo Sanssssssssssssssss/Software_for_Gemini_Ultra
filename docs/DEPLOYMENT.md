@@ -8,6 +8,7 @@ The recommended first production baseline is Docker Compose with:
 - one `postgres` container for durable session storage
 - bind-mounted `config/accounts.json` for account inventory
 - bind-mounted `data/` for runtime cookie artifacts
+- bind-mounted asset storage directory for uploaded and generated media
 
 ## Pre-deployment checklist
 
@@ -18,7 +19,13 @@ The recommended first production baseline is Docker Compose with:
    - `GEMINI_SERVICE_UI_PASSWORD`
    - `GEMINI_SERVICE_UI_SESSION_SECRET`
    - all Gemini cookies in `config/accounts.json`
-4. Confirm the host can reach `gemini.google.com`.
+4. Confirm filesystem storage settings for multimodal assets:
+   - `GEMINI_SERVICE_ASSET_STORAGE_BACKEND`
+   - `GEMINI_SERVICE_ASSET_STORAGE_ROOT`
+   - `GEMINI_SERVICE_ASSET_CLEANUP_INTERVAL_SECONDS`
+   - `GEMINI_SERVICE_ASSET_ORPHAN_GRACE_HOURS`
+   - `GEMINI_SERVICE_ASSET_TTL_HOURS`
+5. Confirm the host can reach `gemini.google.com`.
 
 ## Local process launch
 
@@ -48,6 +55,8 @@ Then verify:
 - `/ui/login` renders
 - `/admin` shows account pool state after login
 - `scripts/smoke_test.py` passes against the deployed service
+- `POST /v1/uploads` accepts a small image and `GET /v1/assets/{asset_id}` returns metadata
+- uploaded files land under the configured controlled asset directory, not inside the database
 
 ## Pre-production offline verification
 
@@ -62,4 +71,6 @@ This exercises the real FastAPI app, scheduler, batch worker, auth boundaries, a
 ## Notes
 
 - SQLite remains supported for local development, but PostgreSQL is the intended deployment database.
+- Multimodal V1 supports image, PDF, and PPTX inputs; do not advertise video/audio support yet.
+- Uploaded files and generated images are persisted in the configured storage backend and cleaned by a background TTL/orphan reaper.
 - This repository's Docker artifacts were authored for production deployment, but they were not runtime-verified in the current environment because Docker was not installed on the build host.

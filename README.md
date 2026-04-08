@@ -109,6 +109,7 @@ The React frontend is built from [`frontend/`](frontend/) and now owns Login, Se
 For local HTTP startup, non-production environments such as `development`, `local`, `local-mock`, and `test` intentionally issue a non-`Secure` UI session cookie so browser logins work without HTTPS termination.
 Run `cd frontend && npm run test:e2e` to execute the Playwright browser suite against the mock environment defined in [`config/e2e.mock.env`](config/e2e.mock.env).
 The service now has a multimodal backend contract foundation: uploads land in controlled storage through `POST /v1/uploads`, messages can send either legacy `{message: "..."}` payloads or structured `parts`, and uploaded assets can be inspected through `GET /v1/assets/{asset_id}` and `GET /v1/assets/{asset_id}/content`. Text-only clients remain backward compatible.
+Multimodal V1 currently supports `png`, `jpg`, `jpeg`, `webp`, `pdf`, and `pptx` inputs, plus text and generated-image outputs. Large binary assets are stored in controlled filesystem storage instead of the SQL database, and attachment-bearing turns default to `temporary=true` unless the caller explicitly opts out.
 
 ## Documentation
 

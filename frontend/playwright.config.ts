@@ -23,10 +23,11 @@ export default defineConfig({
     video: "retain-on-failure",
   },
   webServer: {
-    command: ".\\.venv\\Scripts\\python.exe scripts/run_local.py --env-file config/e2e.mock.env --host 127.0.0.1 --port 8011",
+    command:
+      'powershell -NoProfile -Command "Get-ChildItem -Path \'.\\\\data\' -Filter \'gemini_service.e2e.db*\' -ErrorAction SilentlyContinue | Remove-Item -Force; & \'.\\\\.venv\\\\Scripts\\\\python.exe\' \'scripts/run_local.py\' --env-file \'config/e2e.mock.env\' --host 127.0.0.1 --port 8011"',
     url: "http://127.0.0.1:8011/healthz",
     cwd: repoRoot,
     timeout: 120_000,
-    reuseExistingServer: true,
+    reuseExistingServer: false,
   },
 });
