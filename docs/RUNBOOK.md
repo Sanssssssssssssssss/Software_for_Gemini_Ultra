@@ -69,7 +69,8 @@ Actions:
 1. Run `python scripts/doctor.py --env-file .env` and inspect the `cookie_autosync_*` checks.
 2. If the browser is installed in a non-standard path, set `cookie_source_browser_path` for the affected account.
 3. If the profile directory is wrong or missing, re-run `python scripts/playwright_bootstrap.py` or update `cookie_source_profile_dir`.
-4. If you need the service up immediately, start with `python scripts/run_local.py --env-file .env --skip-cookie-sync`.
+4. Cookie autosync now also refreshes the upstream `gemini_webapi` cookie cache. If the service was already running with stale in-memory cookies, use the admin `refresh` action or restart the service after autosync completes.
+5. If you need the service up immediately, start with `python scripts/run_local.py --env-file .env --skip-cookie-sync`.
 
 ## Incident: one session reports `session_busy`
 

@@ -29,7 +29,7 @@ def test_sync_inventory_updates_configured_account(tmp_path: Path, monkeypatch):
 
     monkeypatch.setattr(
         "gemini_service.core.browser_cookie_sync.sync_cookies_from_profile",
-        lambda **kwargs: ("new-cookie", "new-cookie-ts"),
+        lambda **kwargs: ("new-cookie", "new-cookie-ts", 3),
     )
 
     results = sync_inventory_from_browser_profiles(

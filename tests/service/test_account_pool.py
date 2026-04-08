@@ -84,6 +84,38 @@ def test_account_pool_marks_ready_and_disabled_accounts(tmp_path):
     assert disabled_runtime.state == AccountRuntimeState.DISABLED
 
 
+def test_account_pool_refresh_reloads_account_config_from_inventory(tmp_path):
+    settings = _build_settings(
+        tmp_path,
+        [{"account_id": "acc-1", "secure_1psid": "old-cookie"}],
+    )
+    seen_cookies: list[str] = []
+
+    class InspectingAdapter(FakeAdapter):
+        def __init__(self, config):
+            super().__init__(probe_result=_ready_probe())
+            self.config = config
+
+        async def probe(self):
+            seen_cookies.append(self.config.secure_1psid)
+            return await super().probe()
+
+    pool = AccountPool(settings, adapter_factory=lambda config: InspectingAdapter(config))
+    asyncio.run(pool.start())
+    runtime = pool.get_runtime("acc-1")
+    assert runtime is not None
+    assert seen_cookies[-1] == "old-cookie"
+
+    config_path = tmp_path / "accounts.json"
+    config_path.write_text(
+        json.dumps({"accounts": [{"account_id": "acc-1", "secure_1psid": "new-cookie"}]}),
+        encoding="utf-8",
+    )
+
+    asyncio.run(pool.refresh_account("acc-1"))
+    assert seen_cookies[-1] == "new-cookie"
+
+
 def test_account_pool_enters_blocked_state_on_temporary_failure(tmp_path):
     settings = _build_settings(
         tmp_path,

@@ -13,6 +13,8 @@ from typing import Any
 from urllib.error import URLError
 from urllib.request import urlopen
 
+from gemini_webapi.utils.rotate_1psidts import _get_cookie_cache_dir
+
 COOKIE_NAMES = ("__Secure-1PSID", "__Secure-1PSIDTS")
 WINDOWS_BROWSER_PATHS = {
     "chrome": [
@@ -157,18 +159,71 @@ def _extract_cookies_via_cdp(port: int) -> tuple[str, str] | None:
     with sync_playwright() as playwright:
         browser = playwright.chromium.connect_over_cdp(f"http://127.0.0.1:{port}")
         try:
-            found: dict[str, str] = {}
+            cookies: list[dict[str, Any]] = []
             for context in browser.contexts:
                 for cookie in context.cookies():
-                    if cookie.get("name") in COOKIE_NAMES and cookie.get("domain", "").endswith("google.com"):
-                        value = cookie.get("value", "")
-                        if value:
-                            found[cookie["name"]] = value
-            if all(name in found and found[name] for name in COOKIE_NAMES):
-                return found["__Secure-1PSID"], found["__Secure-1PSIDTS"]
-            return None
+                    domain = str(cookie.get("domain", "")).lstrip(".").lower()
+                    if domain == "google.com" or domain.endswith(".google.com") or domain == "google.co.uk" or domain.endswith(".google.co.uk"):
+                        cookies.append(cookie)
+            return _select_cookie_bundle(cookies)
         finally:
             browser.close()
+
+
+def _cookie_rank(cookie: dict[str, Any]) -> tuple[int, int]:
+    domain = str(cookie.get("domain", "")).lstrip(".").lower()
+    if domain == "google.com":
+        domain_rank = 0
+    elif domain.endswith(".google.com"):
+        domain_rank = 1
+    elif domain == "google.co.uk":
+        domain_rank = 2
+    elif domain.endswith(".google.co.uk"):
+        domain_rank = 3
+    else:
+        domain_rank = 9
+    path_rank = 0 if cookie.get("path") == "/" else 1
+    return (domain_rank, path_rank)
+
+
+def _select_cookie_bundle(cookies: list[dict[str, Any]]) -> tuple[str, str, list[dict[str, Any]]] | None:
+    by_name: dict[str, list[dict[str, Any]]] = {name: [] for name in COOKIE_NAMES}
+    for cookie in cookies:
+        name = cookie.get("name")
+        if name in by_name and cookie.get("value"):
+            by_name[name].append(cookie)
+
+    if not all(by_name[name] for name in COOKIE_NAMES):
+        return None
+
+    secure_1psid = sorted(by_name["__Secure-1PSID"], key=_cookie_rank)[0]["value"]
+    secure_1psidts = sorted(by_name["__Secure-1PSIDTS"], key=_cookie_rank)[0]["value"]
+    return secure_1psid, secure_1psidts, cookies
+
+
+def _write_cookie_cache(secure_1psid: str, cookies: list[dict[str, Any]]) -> int:
+    cache_dir = _get_cookie_cache_dir()
+    cache_dir.mkdir(parents=True, exist_ok=True)
+    cache_path = cache_dir / f".cached_cookies_{secure_1psid}.json"
+    filtered: list[dict[str, Any]] = []
+    for cookie in cookies:
+        domain = str(cookie.get("domain", "")).lstrip(".").lower()
+        if not (domain == "google.com" or domain.endswith(".google.com")):
+            continue
+        expires = cookie.get("expires")
+        if expires and expires < time.time():
+            continue
+        filtered.append(
+            {
+                "name": cookie.get("name"),
+                "value": cookie.get("value"),
+                "domain": cookie.get("domain", ".google.com"),
+                "path": cookie.get("path", "/"),
+                "expires": expires,
+            }
+        )
+    cache_path.write_text(json.dumps(filtered, ensure_ascii=False), encoding="utf-8")
+    return len(filtered)
 
 
 def _looks_like_cookie_pair(secure_1psid: str, secure_1psidts: str) -> bool:
@@ -188,7 +243,7 @@ def sync_cookies_from_profile(
     start_url: str,
     timeout_seconds: int,
     headless: bool,
-) -> tuple[str, str]:
+) -> tuple[str, str, int]:
     valid, _, action = validate_profile_dir(profile_dir)
     if not valid:
         raise FileNotFoundError(action or "The configured browser profile is not ready.")
@@ -209,16 +264,18 @@ def sync_cookies_from_profile(
     process = subprocess.Popen(args)
     try:
         _wait_for_cdp(port, timeout_seconds=min(timeout_seconds, 20))
-        cookies = _extract_cookies_via_cdp(port)
-        if cookies is None:
+        extracted = _extract_cookies_via_cdp(port)
+        if extracted is None:
             raise RuntimeError(
                 "Required Gemini cookies were not found in the configured browser profile."
             )
-        if not _looks_like_cookie_pair(*cookies):
+        secure_1psid, secure_1psidts, cookies = extracted
+        if not _looks_like_cookie_pair(secure_1psid, secure_1psidts):
             raise RuntimeError(
                 "The browser profile returned cookie values that do not look like Gemini web session cookies."
             )
-        return cookies
+        cached_count = _write_cookie_cache(secure_1psid, cookies)
+        return secure_1psid, secure_1psidts, cached_count
     finally:
         process.terminate()
         try:
@@ -293,7 +350,7 @@ def sync_inventory_from_browser_profiles(
             continue
 
         try:
-            secure_1psid, secure_1psidts = sync_cookies_from_profile(
+            secure_1psid, secure_1psidts, cached_count = sync_cookies_from_profile(
                 browser=browser,
                 profile_dir=profile_dir,
                 browser_path=browser_path,
@@ -327,16 +384,16 @@ def sync_inventory_from_browser_profiles(
             updated = False
 
         results.append(
-            CookieSyncResult(
-                account_id=account_id,
-                status="ok",
-                code="cookie_sync_ok",
-                detail="Browser profile cookies synced successfully.",
-                updated=updated,
-                profile_dir=str(profile_dir),
-                browser=browser,
+                CookieSyncResult(
+                    account_id=account_id,
+                    status="ok",
+                    code="cookie_sync_ok",
+                    detail=f"Browser profile cookies synced successfully and refreshed {cached_count} cached google.com cookies.",
+                    updated=updated,
+                    profile_dir=str(profile_dir),
+                    browser=browser,
+                )
             )
-        )
 
     if dirty:
         save_inventory(accounts_path, payload)

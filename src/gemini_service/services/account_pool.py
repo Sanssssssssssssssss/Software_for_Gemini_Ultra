@@ -349,7 +349,31 @@ class AccountPool:
             runtimes[account.account_id] = runtime
         return runtimes
 
+    def _load_inventory_configs(self) -> dict[str, AccountConfig]:
+        path = Path(self.settings.accounts_config_path)
+        if not path.exists():
+            return {}
+        payload = json.loads(path.read_text(encoding="utf-8"))
+        inventory = AccountInventory.model_validate(payload)
+        return {account.account_id: account for account in inventory.accounts}
+
+    async def _reload_runtime_config(self, runtime: AccountRuntime) -> None:
+        latest = self._load_inventory_configs().get(runtime.config.account_id)
+        if latest is None:
+            runtime.operator_disabled = True
+            self._set_state(runtime, AccountRuntimeState.DISABLED, "account missing from inventory")
+            return
+
+        if latest.model_dump() == runtime.config.model_dump():
+            return
+
+        old_adapter = runtime.adapter
+        runtime.config = latest
+        runtime.adapter = self._build_adapter(latest)
+        await old_adapter.close()
+
     async def _refresh_runtime(self, runtime: AccountRuntime) -> None:
+        await self._reload_runtime_config(runtime)
         now = datetime.now(timezone.utc)
         runtime.last_checked_at = now
 
