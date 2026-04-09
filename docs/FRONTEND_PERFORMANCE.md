@@ -4,70 +4,103 @@
 
 The frontend is tuned around a few strict rules:
 
-- streaming text updates: at most one React commit per animation frame
-- no session-rail full refresh after every send
+- session-level streaming state instead of a page-global lock
+- streamed text updates batched by `requestAnimationFrame`
 - no markdown parsing during streaming
 - no full-page admin refresh after runtime actions
-- motion relies primarily on opacity and transform
+- no layout-property animation dependencies
 
 ## Current implementation
 
 ### Chat streaming
 
 - SSE events are parsed in `frontend/src/lib/streaming.ts`
-- text deltas are accumulated in a ref buffer
-- `requestAnimationFrame` performs batched UI flushes
-- the assistant bubble renders plain text during streaming
+- session runtime state is owned by `frontend/src/chat/useChatWorkspace.ts`
+- text deltas are buffered per session
+- each active stream flushes at most once per animation frame
+- the assistant bubble renders plain text while streaming
 - markdown rendering happens only after `done`
+
+### Workspace responsiveness
+
+- send/cancel state is scoped to the active session
+- a pending stream in session A does not disable send in session B
+- the session rail and chat shell stay navigable during streaming
+- uploads remain draft-local instead of page-global
 
 ### Thinking indicator
 
-- frame cadence: `125ms`
-- label cadence: `1800ms`
 - reduced-motion users receive a static indicator
+- the cadence was slowed down to reduce unnecessary churn from the indicator itself
 
-### Scroll behavior
+## Validation commands
 
-- auto-follow stays enabled only while the user is near the bottom
-- once the user scrolls away, the UI stops forcing the viewport down
-- a “Jump to latest” control restores follow mode
-
-## Validation workflow
-
-Use this sequence when validating frontend performance locally:
+Build:
 
 ```sh
 cd frontend
 npm run build
-cd ..
-py scripts/run_local.py --env-file .env.local.mock --host 127.0.0.1 --port 8010
 ```
 
-Then in the browser:
+Targeted E2E:
 
-1. Open `/ui/chat`
-2. Send a long prompt that produces multiple streamed chunks
-3. Record a Chrome or Edge Performance trace
-4. Confirm there is no layout thrash on every chunk
-5. Confirm React commits stay coarse-grained instead of per-chunk
+```sh
+cd frontend
+npx playwright test e2e/auth.spec.ts e2e/admin.spec.ts e2e/chat.spec.ts --workers=1
+```
+
+Trace summary:
+
+```sh
+cd frontend
+npm run perf:trace
+```
+
+This writes:
+
+- `output/perf/chat-stream-trace.json`
+- `output/perf/chat-stream-summary.json`
+
+## Latest local trace
+
+Local run date: April 8, 2026
+
+Environment:
+
+- backend at `http://127.0.0.1:8011`
+- controlled slow streaming via browser-side delayed SSE response
+- desktop viewport `1366x900`
+
+Observed summary from `output/perf/chat-stream-summary.json`:
+
+- `secondSendEnabledDuringPending: true`
+- `longTaskCount: 0`
+- `maxLongTaskMs: 0`
+- `layoutEventCount: 33`
+- `maxLayoutMs: 14.06`
+- `styleEventCount: 92`
+- `maxStyleMs: 0.91`
+
+Interpretation:
+
+- the controlled slow-stream scenario did not produce any >50ms renderer tasks
+- layout work remained well below the 50ms long-task threshold
+- session B remained sendable while session A was still pending
 
 ## What to inspect
 
-- main thread flame chart during streaming
 - long tasks over 50ms
-- layout / style recalculation frequency
-- React commit count while chunks arrive
-- input responsiveness while a stream is active
+- layout duration spikes during streaming
+- style recalculation spikes during streaming
+- whether send remains enabled in a second session while the first is still pending
+- whether the rail remains visually stable while the active conversation updates
 
-## Expected healthy signals
+## React profiler note
 
-- the message bubble updates smoothly without rail flicker
-- the composer remains clickable during stream output
-- admin actions update in place without navigation flashes
-- reduced-motion mode still keeps the UI usable and readable
+The backend-hosted production bundle does not expose React DevTools timing hooks in this environment, so `window.__REACT_DEVTOOLS_GLOBAL_HOOK__` was `false` during the latest local run. If deeper React commit profiling is needed, use a profiling-capable development build and React DevTools on top of the same backend APIs.
 
 ## Current limits
 
-- markdown highlighting is intentionally deferred; code highlighting is not yet lazy-loaded
-- metrics for frontend render timings are not yet shipped to the backend
-- E2E validates flow correctness, not FPS directly
+- this repo now has a repeatable trace summary script, but it is still a lightweight regression tool rather than a full CI performance lab
+- frontend render timing metrics are not yet shipped back to backend telemetry
+- the trace summary is strongest for regression detection and session-concurrency verification, not for absolute FPS certification

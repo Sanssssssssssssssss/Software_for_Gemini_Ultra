@@ -11,8 +11,8 @@ export function ThinkingIndicator({ active, phaseLabel }: ThinkingIndicatorProps
 
   return (
     <div
-      aria-live="polite"
       aria-label={label}
+      aria-live="polite"
       className={`thinking-indicator${active ? " active" : ""}`}
     >
       <span className="thinking-indicator__frame" aria-hidden="true">

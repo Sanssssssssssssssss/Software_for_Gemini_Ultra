@@ -1,34 +1,41 @@
-import type { MessageMedia, MessageResponsePart } from "../lib/api";
+import { memo } from "react";
+
+import type { UiMessage } from "../chat/types";
 import { MessageAttachments } from "./MessageAttachments";
 import { MarkdownMessage } from "./MarkdownMessage";
 import { ThinkingIndicator } from "./ThinkingIndicator";
-
-export type UiMessage = {
-  id: string;
-  role: "user" | "assistant" | "system";
-  content: string;
-  createdAt?: string | null;
-  isStreaming?: boolean;
-  isThinking?: boolean;
-  thinkingLabel?: string | null;
-  errorText?: string | null;
-  parts?: MessageResponsePart[];
-  media?: MessageMedia[];
-};
 
 type MessageBubbleProps = {
   message: UiMessage;
 };
 
-export function MessageBubble({ message }: MessageBubbleProps) {
+function formatTimestamp(value?: string | null) {
+  if (!value) {
+    return "";
+  }
+
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) {
+    return value;
+  }
+
+  return date.toLocaleString("zh-CN", {
+    month: "short",
+    day: "numeric",
+    hour: "2-digit",
+    minute: "2-digit",
+  });
+}
+
+function MessageBubbleComponent({ message }: MessageBubbleProps) {
   const isAssistant = message.role === "assistant";
-  const label = message.role === "user" ? "You" : message.role === "assistant" ? "Gemini" : "System";
+  const label = message.role === "user" ? "你" : message.role === "assistant" ? "Gemini" : "系统";
 
   return (
     <article className={`message-card role-${message.role}`}>
       <div className="message-card__meta">
         <strong>{label}</strong>
-        {message.createdAt ? <span>{message.createdAt}</span> : null}
+        {message.createdAt ? <span>{formatTimestamp(message.createdAt)}</span> : null}
       </div>
       {message.isThinking ? <ThinkingIndicator active={true} phaseLabel={message.thinkingLabel} /> : null}
       {message.errorText ? <div className="inline-error">{message.errorText}</div> : null}
@@ -43,3 +50,6 @@ export function MessageBubble({ message }: MessageBubbleProps) {
     </article>
   );
 }
+
+export const MessageBubble = memo(MessageBubbleComponent);
+export type { UiMessage };

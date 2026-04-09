@@ -26,6 +26,7 @@ from ..schemas.common import (
     SessionHistoryItem,
     SessionHistoryResponse,
     SessionResponse,
+    SessionUpdateRequest,
 )
 from .asset_service import AssetService
 from .account_pool import AccountPool, AccountSelection
@@ -93,6 +94,40 @@ class ChatService:
             session_id=session_id,
             items=history_items,
         )
+
+    async def update_session(
+        self,
+        session_id: str,
+        request: SessionUpdateRequest,
+        auth: AuthContext,
+    ) -> SessionResponse:
+        await self._require_session(session_id, auth)
+        updated = await self.repository.update_session_title(session_id, request.title)
+        if updated is None:
+            raise ServiceError(
+                status_code=404,
+                code="session_not_found",
+                message=f"Session {session_id} does not exist.",
+            )
+        return self._session_response(updated)
+
+    async def delete_session(self, session_id: str, auth: AuthContext) -> None:
+        await self._require_session(session_id, auth)
+        async with self._session_execution_guard:
+            if session_id in self._active_session_ids:
+                raise ServiceError(
+                    status_code=409,
+                    code="session_busy",
+                    message="This session is still generating a reply and cannot be deleted yet.",
+                    details={"session_id": session_id},
+                )
+        deleted = await self.repository.delete_session(session_id)
+        if not deleted:
+            raise ServiceError(
+                status_code=404,
+                code="session_not_found",
+                message=f"Session {session_id} does not exist.",
+            )
 
     async def list_sessions(self, auth: AuthContext, limit: int = 50) -> list[SessionResponse]:
         records = await self.repository.list_sessions(
@@ -467,6 +502,7 @@ class ChatService:
         )
 
     def _session_response(self, record: SessionRecord) -> SessionResponse:
+        metadata = self.repository._load_metadata(record.metadata_json)
         return SessionResponse(
             session_id=record.id,
             account_id=record.account_id,
@@ -475,6 +511,7 @@ class ChatService:
             model=record.model_name,
             gem=record.gem_id,
             allow_failover=record.allow_failover,
+            title=metadata.get("title"),
             gemini_metadata=self._metadata_from_record(record),
             created_at=record.created_at.isoformat() if record.created_at else None,
             updated_at=record.updated_at.isoformat() if record.updated_at else None,

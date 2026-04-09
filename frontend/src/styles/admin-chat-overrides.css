@@ -1,0 +1,132 @@
+.message-attachments {
+  display: grid;
+  gap: 12px;
+  overflow: visible;
+}
+
+.message-media-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 320px));
+  gap: 12px;
+}
+
+.generated-media-card--large {
+  display: grid;
+  gap: 10px;
+  align-content: start;
+  text-decoration: none;
+}
+
+.attachment-image--large {
+  width: 100%;
+  height: auto;
+  min-height: 220px;
+  max-height: 420px;
+  object-fit: cover;
+  border-radius: var(--radius-sm);
+}
+
+.attachment-card--file {
+  display: grid;
+  gap: 10px;
+}
+
+.admin-shell .page-section__copy {
+  max-width: 760px;
+}
+
+.admin-shell .admin-summary-strip {
+  grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+}
+
+.admin-shell .metric-card {
+  min-height: 0;
+  padding: 12px 14px;
+}
+
+.admin-shell .metric-card p {
+  display: none;
+}
+
+.admin-shell .admin-grid {
+  grid-template-columns: minmax(0, 1.25fr) minmax(320px, 0.88fr);
+  gap: 18px;
+  align-items: start;
+}
+
+.admin-shell .admin-panel {
+  gap: 14px;
+}
+
+.admin-shell .section-head h2 {
+  margin: 4px 0 0;
+  font-size: 1.15rem;
+}
+
+.admin-shell .section-head .section-kicker {
+  margin-bottom: 2px;
+}
+
+.admin-shell .runtime-account,
+.admin-shell .admin-job-card,
+.admin-shell .admin-session-row {
+  padding: 12px;
+}
+
+.admin-shell .runtime-account__meta,
+.admin-shell .runtime-account__stats,
+.admin-shell .account-admin-card__actions,
+.admin-shell .admin-session-row__meta {
+  gap: 8px;
+}
+
+.admin-shell .account-admin-card__actions {
+  flex-wrap: wrap;
+}
+
+.admin-shell .admin-asset-row {
+  align-items: start;
+}
+
+.admin-asset-row__main {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  gap: 10px;
+  align-items: start;
+}
+
+.admin-asset-thumb {
+  width: 56px;
+  height: 56px;
+  object-fit: cover;
+  border: 1px solid var(--surface-border);
+  border-radius: var(--radius-xs);
+}
+
+.tone-danger {
+  border-color: rgba(255, 69, 58, 0.24);
+  color: #ffb4ae;
+}
+
+.tone-danger:hover,
+.tone-danger:focus-visible {
+  border-color: rgba(255, 69, 58, 0.4);
+  background: rgba(255, 69, 58, 0.08);
+  color: #ffd2cd;
+}
+
+@media (max-width: 1080px) {
+  .admin-shell .admin-grid {
+    grid-template-columns: 1fr;
+  }
+}
+
+@media (max-width: 720px) {
+  .message-media-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .admin-asset-row__main {
+    grid-template-columns: 1fr;
+  }
+}

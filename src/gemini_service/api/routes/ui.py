@@ -391,6 +391,15 @@ async def ui_admin_patch_account(
     return account.model_dump(mode="json")
 
 
+@router.delete("/ui/api/admin/accounts/{account_id}")
+async def ui_admin_delete_account(
+    account_id: str,
+    _: AuthContext = Depends(require_ui_admin),
+    admin_console: AdminConsoleService = Depends(get_admin_console_service),
+):
+    return await admin_console.delete_account(account_id)
+
+
 @router.get("/ui/api/admin/reauth-jobs")
 async def ui_admin_list_reauth_jobs(
     _: AuthContext = Depends(require_ui_admin),

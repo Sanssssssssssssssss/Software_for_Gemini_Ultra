@@ -4,36 +4,44 @@ import { Link } from "react-router-dom";
 import type { UiMe } from "../lib/api";
 
 type AppHeaderProps = {
-  me: UiMe;
-  title: string;
-  subtitle: string;
-  badge: string;
   actions?: ReactNode;
+  badge: string;
+  me: UiMe;
+  subtitle: string;
+  title: string;
 };
 
-export function AppHeader({ me, title, subtitle, badge, actions }: AppHeaderProps) {
+function formatIdentity(me: UiMe) {
+  const roleLabel = me.is_admin ? "管理员" : "普通用户";
+  return me.subject ? `${roleLabel} / ${me.subject}` : roleLabel;
+}
+
+export function AppHeader({ actions, badge, me, subtitle, title }: AppHeaderProps) {
   return (
-    <header className="app-header">
+    <header className="app-header panel-surface">
       <div className="app-header__intro">
-        <span className="eyebrow">{badge}</span>
+        <div className="app-header__topline">
+          <span className="section-kicker">{badge}</span>
+          <span className="app-header__identity">{formatIdentity(me)}</span>
+        </div>
         <h1>{title}</h1>
         <p>{subtitle}</p>
       </div>
+
       <div className="app-header__actions">
-        <span className="status-pill ok compact">
-          {me.subject} · {me.role}
-        </span>
-        <Link className="secondary-link compact-link" to="/setup">
-          Setup
-        </Link>
-        <Link className="secondary-link compact-link" to="/ui/chat">
-          Chat
-        </Link>
-        {me.is_admin ? (
-          <Link className="secondary-link compact-link" to="/admin">
-            Admin
+        <nav className="app-nav" aria-label="工作区导航">
+          <Link className="secondary-link compact-link" to="/setup">
+            配置
           </Link>
-        ) : null}
+          <Link className="secondary-link compact-link" to="/ui/chat">
+            聊天
+          </Link>
+          {me.is_admin ? (
+            <Link className="secondary-link compact-link" to="/admin">
+              管理
+            </Link>
+          ) : null}
+        </nav>
         {actions}
       </div>
     </header>

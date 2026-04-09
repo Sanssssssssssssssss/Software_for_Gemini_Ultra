@@ -77,6 +77,10 @@ class SessionCreateRequest(BaseModel):
     metadata: dict[str, Any] = Field(default_factory=dict)
 
 
+class SessionUpdateRequest(BaseModel):
+    title: str | None = None
+
+
 class SessionResponse(BaseModel):
     session_id: str
     account_id: str
@@ -85,6 +89,7 @@ class SessionResponse(BaseModel):
     model: str | None = None
     gem: str | None = None
     allow_failover: bool = False
+    title: str | None = None
     gemini_metadata: list[str] = Field(default_factory=list)
     created_at: str | None = None
     updated_at: str | None = None

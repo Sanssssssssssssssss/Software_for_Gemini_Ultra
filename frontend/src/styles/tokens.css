@@ -1,37 +1,59 @@
 :root {
-  color-scheme: light;
-  --page-bg: #f6f0e4;
-  --page-bg-elevated: #fbf7ef;
-  --surface: rgba(255, 252, 246, 0.86);
-  --surface-strong: rgba(255, 251, 244, 0.96);
-  --surface-border: rgba(66, 45, 22, 0.12);
-  --surface-border-strong: rgba(66, 45, 22, 0.18);
-  --surface-shadow: 0 26px 60px rgba(83, 58, 30, 0.08);
-  --ink-primary: #23180e;
-  --ink-secondary: #675748;
-  --ink-tertiary: #8f7d6a;
-  --accent-primary: #c76f2a;
-  --accent-primary-deep: #9f4f12;
-  --accent-soft: rgba(199, 111, 42, 0.12);
-  --accent-soft-strong: rgba(199, 111, 42, 0.18);
-  --success: #1f6a4d;
-  --success-soft: rgba(31, 106, 77, 0.12);
-  --warning: #b46f17;
-  --warning-soft: rgba(180, 111, 23, 0.12);
-  --danger: #b34532;
-  --danger-soft: rgba(179, 69, 50, 0.14);
-  --radius-xl: 30px;
-  --radius-lg: 22px;
-  --radius-md: 16px;
+  color-scheme: dark;
+  --page-bg: #0f1113;
+  --page-bg-elevated: #111418;
+  --surface: #171a1f;
+  --surface-strong: #1c2026;
+  --surface-muted: #14181d;
+  --surface-input: #101317;
+  --surface-panel: #171a1f;
+  --surface-border: rgba(255, 255, 255, 0.08);
+  --surface-border-strong: rgba(255, 255, 255, 0.14);
+  --surface-border-accent: rgba(86, 155, 255, 0.42);
+  --ink-primary: #f5f7fb;
+  --ink-secondary: #d8dee8;
+  --ink-muted: #a6afbc;
+  --ink-faint: #7b8697;
+  --accent-primary: #569bff;
+  --accent-primary-hover: #78afff;
+  --accent-primary-active: #3c7fe6;
+  --success: #3bd17f;
+  --success-soft: rgba(59, 209, 127, 0.14);
+  --warning: #f0b15f;
+  --warning-soft: rgba(240, 177, 95, 0.14);
+  --danger: #ff7369;
+  --danger-soft: rgba(255, 115, 105, 0.14);
+  --radius-xs: 8px;
   --radius-sm: 12px;
-  --space-2xs: 6px;
-  --space-xs: 10px;
-  --space-sm: 14px;
-  --space-md: 18px;
+  --radius-md: 16px;
+  --space-2xs: 4px;
+  --space-xs: 8px;
+  --space-sm: 12px;
+  --space-md: 16px;
   --space-lg: 24px;
   --space-xl: 32px;
   --space-2xl: 48px;
-  --font-sans: "Segoe UI", "PingFang SC", "Microsoft YaHei", "Noto Sans SC", sans-serif;
-  --transition-fast: 180ms ease;
-  --transition-medium: 240ms ease;
+  --space-3xl: 64px;
+  --font-sans:
+    "Inter",
+    "Segoe UI",
+    "PingFang SC",
+    "Microsoft YaHei",
+    "Helvetica Neue",
+    Arial,
+    sans-serif;
+  --font-mono:
+    "Berkeley Mono",
+    "IBM Plex Mono",
+    ui-monospace,
+    "SFMono-Regular",
+    Menlo,
+    Monaco,
+    Consolas,
+    "Liberation Mono",
+    "Courier New",
+    monospace;
+  --transition-fast: 140ms ease;
+  --transition-medium: 200ms ease;
+  --focus-ring: 0 0 0 1px var(--accent-primary);
 }

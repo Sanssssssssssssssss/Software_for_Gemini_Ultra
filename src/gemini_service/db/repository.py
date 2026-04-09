@@ -4,7 +4,7 @@ import json
 from datetime import datetime, timezone
 from pathlib import Path
 
-from sqlalchemy import inspect, select
+from sqlalchemy import inspect, select, update
 from sqlalchemy.engine import Connection, make_url
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
@@ -92,6 +92,26 @@ class ChatRepository:
             record.gemini_cid = gemini_metadata[0] if len(gemini_metadata) > 0 else None
             record.gemini_rid = gemini_metadata[1] if len(gemini_metadata) > 1 else None
             record.gemini_rcid = gemini_metadata[2] if len(gemini_metadata) > 2 else None
+            await db.commit()
+            await db.refresh(record)
+            return record
+
+    async def update_session_title(
+        self,
+        session_id: str,
+        title: str | None,
+    ) -> SessionRecord | None:
+        async with self._session() as db:
+            record = await db.get(SessionRecord, session_id)
+            if record is None:
+                return None
+            metadata = self._load_metadata(record.metadata_json)
+            cleaned = (title or "").strip()
+            if cleaned:
+                metadata["title"] = cleaned
+            else:
+                metadata.pop("title", None)
+            record.metadata_json = self._dump_metadata(metadata)
             await db.commit()
             await db.refresh(record)
             return record
@@ -274,6 +294,21 @@ class ChatRepository:
                 query = query.where(SessionRecord.owner_subject == owner_subject)
             result = await db.execute(query)
             return list(result.scalars())
+
+    async def delete_session(self, session_id: str) -> bool:
+        async with self._session() as db:
+            record = await db.get(SessionRecord, session_id)
+            if record is None:
+                return False
+
+            await db.execute(
+                update(MediaAssetRecord)
+                .where(MediaAssetRecord.session_id == session_id)
+                .values(session_id=None, message_id=None)
+            )
+            await db.delete(record)
+            await db.commit()
+            return True
 
     async def count_sessions(self) -> int:
         async with self._session() as db:

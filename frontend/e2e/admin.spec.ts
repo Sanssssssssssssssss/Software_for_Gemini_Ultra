@@ -9,11 +9,11 @@ test("admin overview performs async account actions without leaving the page", a
 
   await page.goto("/admin");
   await expect(page).toHaveURL(/\/admin$/);
-  await expect(page.getByRole("heading", { name: "Account pool admin" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "账号恢复与系统控制台" })).toBeVisible();
 
   const refreshButton = page.getByTestId("admin-action-mock-ready-1-refresh");
   await refreshButton.click();
 
   await expect(page).toHaveURL(/\/admin$/);
-  await expect(page.getByText("mock-ready-1: Account refreshed.")).toBeVisible();
+  await expect(page.getByText(/mock-ready-1.*Account refreshed\./)).toBeVisible();
 });
