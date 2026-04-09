@@ -184,6 +184,41 @@ def test_chat_service_reuses_idempotent_response(tmp_path):
     assert adapter.calls == 1
 
 
+def test_chat_service_lists_sessions_with_derived_titles(tmp_path):
+    settings = _build_settings(
+        tmp_path,
+        [{"account_id": "acc-1", "secure_1psid": "cookie"}],
+    )
+    adapter = FakeChatAdapter("acc-1")
+    pool = AccountPool(settings, adapter_factory=lambda config: adapter)
+    repo = ChatRepository(settings.database_url)
+    asset_service = AssetService(settings=settings, repository=repo, storage=LocalAssetStorage(str(tmp_path / "assets")))
+
+    async def scenario():
+        await repo.start()
+        await pool.start()
+        service = ChatService(pool=pool, repository=repo, asset_service=asset_service)
+        session = await service.create_session(SessionCreateRequest(account_id="acc-1"), auth=ADMIN)
+        await service.send_message(
+            MessageRequest(
+                session_id=session.session_id,
+                message="这是一个很长的标题候选，用来确认列表页刷新时可以直接拿到会话名字，而不是只能显示会话 01。",
+                idempotency_key="req-title-1",
+            ),
+            auth=ADMIN,
+        )
+        listed = await service.list_sessions(auth=ADMIN, limit=10)
+        loaded = await service.get_session(session.session_id, auth=ADMIN)
+        await repo.close()
+        await pool.close()
+        return listed, loaded
+
+    listed, loaded = _run(scenario())
+    assert listed[0].title is not None
+    assert listed[0].title.startswith("这是一个很长的标题候选")
+    assert loaded.title == listed[0].title
+
+
 def test_chat_service_blocks_non_admin_account_pinning(tmp_path):
     settings = _build_settings(tmp_path, [{"account_id": "acc-1", "secure_1psid": "cookie"}])
     pool = AccountPool(settings, adapter_factory=lambda config: FakeChatAdapter("acc-1"))

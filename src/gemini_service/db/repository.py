@@ -295,6 +295,27 @@ class ChatRepository:
             result = await db.execute(query)
             return list(result.scalars())
 
+    async def list_session_title_candidates(self, session_ids: list[str]) -> dict[str, str]:
+        if not session_ids:
+            return {}
+        async with self._session() as db:
+            result = await db.execute(
+                select(MessageRecord)
+                .where(
+                    MessageRecord.session_id.in_(session_ids),
+                    MessageRecord.role == "user",
+                )
+                .order_by(MessageRecord.session_id.asc(), MessageRecord.created_at.asc())
+            )
+            titles: dict[str, str] = {}
+            for record in result.scalars():
+                if record.session_id in titles:
+                    continue
+                content = (record.content or "").strip()
+                if content:
+                    titles[record.session_id] = content
+            return titles
+
     async def delete_session(self, session_id: str) -> bool:
         async with self._session() as db:
             record = await db.get(SessionRecord, session_id)

@@ -72,7 +72,8 @@ class ChatService:
 
     async def get_session(self, session_id: str, auth: AuthContext) -> SessionResponse:
         record = await self._require_session(session_id, auth)
-        return self._session_response(record)
+        title_candidates = await self.repository.list_session_title_candidates([record.id])
+        return self._session_response(record, derived_title=title_candidates.get(record.id))
 
     async def get_history(self, session_id: str, auth: AuthContext) -> SessionHistoryResponse:
         record = await self._require_session(session_id, auth)
@@ -109,7 +110,8 @@ class ChatService:
                 code="session_not_found",
                 message=f"Session {session_id} does not exist.",
             )
-        return self._session_response(updated)
+        title_candidates = await self.repository.list_session_title_candidates([updated.id])
+        return self._session_response(updated, derived_title=title_candidates.get(updated.id))
 
     async def delete_session(self, session_id: str, auth: AuthContext) -> None:
         await self._require_session(session_id, auth)
@@ -134,7 +136,8 @@ class ChatService:
             limit=limit,
             owner_subject=None if auth.is_admin else auth.subject,
         )
-        return [self._session_response(record) for record in records]
+        title_candidates = await self.repository.list_session_title_candidates([record.id for record in records])
+        return [self._session_response(record, derived_title=title_candidates.get(record.id)) for record in records]
 
     async def send_message(self, request: MessageRequest, auth: AuthContext) -> MessageResponse:
         async with self._session_execution(request.session_id):
@@ -501,8 +504,9 @@ class ChatService:
             user_message_id=None,
         )
 
-    def _session_response(self, record: SessionRecord) -> SessionResponse:
+    def _session_response(self, record: SessionRecord, derived_title: str | None = None) -> SessionResponse:
         metadata = self.repository._load_metadata(record.metadata_json)
+        title = metadata.get("title") or self._summarize_session_title(derived_title)
         return SessionResponse(
             session_id=record.id,
             account_id=record.account_id,
@@ -511,11 +515,21 @@ class ChatService:
             model=record.model_name,
             gem=record.gem_id,
             allow_failover=record.allow_failover,
-            title=metadata.get("title"),
+            title=title,
             gemini_metadata=self._metadata_from_record(record),
             created_at=record.created_at.isoformat() if record.created_at else None,
             updated_at=record.updated_at.isoformat() if record.updated_at else None,
         )
+
+    def _summarize_session_title(self, content: str | None, max_length: int = 32) -> str | None:
+        if not content:
+            return None
+        single_line = " ".join(content.split()).strip()
+        if not single_line:
+            return None
+        if len(single_line) <= max_length:
+            return single_line
+        return f"{single_line[: max_length - 3]}..."
 
     async def _message_response(
         self,

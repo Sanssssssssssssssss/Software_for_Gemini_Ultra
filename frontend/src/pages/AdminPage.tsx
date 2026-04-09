@@ -131,6 +131,15 @@ export function AdminPage() {
   const [pendingActions, setPendingActions] = useState<Record<string, boolean>>({});
   const [selectedAccountId, setSelectedAccountId] = useState<string | null>(null);
   const [accountForm, setAccountForm] = useState<AccountFormState>({ ...DEFAULT_ACCOUNT_FORM });
+  const activeAccountRequests = useMemo(
+    () => Object.values(dashboard?.telemetry.account_in_flight ?? {}).reduce((sum, value) => sum + value, 0),
+    [dashboard?.telemetry.account_in_flight],
+  );
+  const activeAccountQueues = useMemo(
+    () => Object.values(dashboard?.telemetry.account_queue_depth ?? {}).reduce((sum, value) => sum + value, 0),
+    [dashboard?.telemetry.account_queue_depth],
+  );
+  const recentAssets = useMemo(() => (dashboard?.assets ?? []).slice(0, 8), [dashboard?.assets]);
 
   async function refreshDashboard() {
     const next = await getAdminDashboard();
@@ -144,7 +153,6 @@ export function AdminPage() {
 
   useEffect(() => {
     let cancelled = false;
-    let interval = 0;
     async function load() {
       try {
         const currentMe = await getMe();
@@ -154,6 +162,11 @@ export function AdminPage() {
         if (!cancelled) {
           setMe(currentMe);
           setDashboard(nextDashboard);
+          if (selectedAccountId) {
+            const selected = nextDashboard.inventory_accounts.find((item) => item.account_id === selectedAccountId);
+            setAccountForm(toFormState(selected ?? null));
+            if (!selected) setSelectedAccountId(null);
+          }
         }
       } catch (caught) {
         if (!cancelled) {
@@ -168,15 +181,36 @@ export function AdminPage() {
       }
     }
     void load();
-    const hasActiveJobs = dashboard?.reauth_jobs.some((job) => !job.is_terminal) ?? false;
-    interval = window.setInterval(() => {
-      void refreshDashboard().catch(() => undefined);
-    }, hasActiveJobs ? 2500 : 15000);
     return () => {
       cancelled = true;
-      window.clearInterval(interval);
     };
-  }, [dashboard?.reauth_jobs, navigate, selectedAccountId]);
+  }, [navigate, selectedAccountId]);
+
+  useEffect(() => {
+    if (!me?.is_admin) return undefined;
+    const hasActiveJobs = dashboard?.reauth_jobs.some((job) => !job.is_terminal) ?? false;
+    const hasActiveAccountTraffic =
+      Object.values(dashboard?.telemetry.account_in_flight ?? {}).some((value) => value > 0) ||
+      Object.values(dashboard?.telemetry.account_queue_depth ?? {}).some((value) => value > 0);
+    const interval = window.setInterval(() => {
+      void refreshDashboard().catch(() => undefined);
+    }, hasActiveJobs || hasActiveAccountTraffic ? 2500 : 8000);
+    const handleVisibilityRefresh = () => {
+      if (document.visibilityState === "visible") {
+        void refreshDashboard().catch(() => undefined);
+      }
+    };
+    const handleFocusRefresh = () => {
+      void refreshDashboard().catch(() => undefined);
+    };
+    document.addEventListener("visibilitychange", handleVisibilityRefresh);
+    window.addEventListener("focus", handleFocusRefresh);
+    return () => {
+      window.clearInterval(interval);
+      document.removeEventListener("visibilitychange", handleVisibilityRefresh);
+      window.removeEventListener("focus", handleFocusRefresh);
+    };
+  }, [dashboard?.reauth_jobs, dashboard?.telemetry.account_in_flight, dashboard?.telemetry.account_queue_depth, me?.is_admin, selectedAccountId]);
 
   const selectedAccount = useMemo(
     () => dashboard?.inventory_accounts.find((item) => item.account_id === selectedAccountId) ?? null,
@@ -348,7 +382,8 @@ export function AdminPage() {
       <section className="admin-summary-strip">
         <article className="metric-card"><span>可路由</span><strong>{dashboard.health.ready_accounts}</strong></article>
         <article className="metric-card danger"><span>需重登</span><strong>{dashboard.health.reauth_required}</strong></article>
-        <article className="metric-card"><span>请求中</span><strong>{dashboard.telemetry.active_requests}</strong></article>
+        <article className="metric-card"><span>账号并发</span><strong>{activeAccountRequests}</strong></article>
+        <article className="metric-card"><span>排队中</span><strong>{activeAccountQueues}</strong></article>
         <article className="metric-card"><span>会话</span><strong>{dashboard.telemetry.chat_sessions}</strong></article>
         <article className="metric-card"><span>文件</span><strong>{dashboard.telemetry.chat_assets}</strong></article>
       </section>
@@ -516,9 +551,9 @@ export function AdminPage() {
           </section>
 
           <section className="panel-surface admin-panel">
-            <div className="section-head"><div><span className="section-kicker">近期文件</span><h2>打开 / 下载</h2></div></div>
+            <div className="section-head"><div><span className="section-kicker">近期文件</span><h2>最近 8 条</h2></div></div>
             <div className="admin-session-list admin-asset-list">
-              {dashboard.assets.length ? dashboard.assets.map((asset) => {
+              {recentAssets.length ? recentAssets.map((asset) => {
                 const href = buildUiAssetContentUrl(asset.asset_id);
                 const isImage = asset.mime_type.startsWith("image/");
                 return (
