@@ -83,6 +83,12 @@ class CookieBundle:
     cookies: list[dict[str, Any]]
 
 
+@dataclass(slots=True)
+class CookiePairCandidate:
+    secure_1psid: str
+    secure_1psidts: str
+
+
 def _is_process_running(process: subprocess.Popen[Any]) -> bool:
     return process.poll() is None
 
@@ -211,25 +217,59 @@ def browser_debug_endpoint_available(port: int, timeout_seconds: int = 2) -> boo
 
 
 def _extract_cookies_via_cdp(port: int) -> tuple[str, str, list[dict[str, Any]]] | None:
-    try:
-        from playwright.sync_api import sync_playwright
-    except ImportError as exc:
-        raise RuntimeError(
-            "Playwright is required for browser cookie sync. Install it in the active environment first."
-        ) from exc
+    version_url = f"http://127.0.0.1:{port}/json/version"
+    with urlopen(version_url, timeout=5) as response:
+        version_payload = json.loads(response.read().decode("utf-8"))
+    websocket_url = version_payload.get("webSocketDebuggerUrl")
+    if not websocket_url:
+        raise RuntimeError("Chrome debug endpoint did not expose a browser websocket URL.")
 
-    with sync_playwright() as playwright:
-        browser = playwright.chromium.connect_over_cdp(f"http://127.0.0.1:{port}")
-        try:
-            cookies: list[dict[str, Any]] = []
-            for context in browser.contexts:
-                for cookie in context.cookies():
-                    domain = str(cookie.get("domain", "")).lstrip(".").lower()
-                    if domain == "google.com" or domain.endswith(".google.com") or domain == "google.co.uk" or domain.endswith(".google.co.uk"):
-                        cookies.append(cookie)
-            return _select_cookie_bundle(cookies)
-        finally:
-            browser.close()
+    node_script = r"""
+const wsUrl = process.argv[1];
+if (!wsUrl) {
+  console.error("missing websocket url");
+  process.exit(2);
+}
+const ws = new WebSocket(wsUrl);
+const timer = setTimeout(() => {
+  console.error("timed out waiting for CDP cookies");
+  process.exit(3);
+}, 10000);
+ws.onopen = () => {
+  ws.send(JSON.stringify({ id: 1, method: "Storage.getCookies" }));
+};
+ws.onmessage = (event) => {
+  const message = JSON.parse(event.data.toString());
+  if (message.id !== 1) return;
+  clearTimeout(timer);
+  const cookies = message?.result?.cookies ?? [];
+  process.stdout.write(JSON.stringify(cookies));
+  ws.close();
+};
+ws.onerror = (error) => {
+  clearTimeout(timer);
+  console.error(error?.message || String(error));
+  process.exit(4);
+};
+"""
+    completed = subprocess.run(
+        ["node", "-e", node_script, websocket_url],
+        check=False,
+        capture_output=True,
+        text=True,
+        timeout=20,
+    )
+    if completed.returncode != 0:
+        raise RuntimeError(
+            f"Node-based CDP cookie collection failed with exit code {completed.returncode}: {(completed.stderr or completed.stdout).strip()}"
+        )
+    cookies = json.loads(completed.stdout or "[]")
+    filtered: list[dict[str, Any]] = []
+    for cookie in cookies:
+        domain = str(cookie.get("domain", "")).lstrip(".").lower()
+        if domain == "google.com" or domain.endswith(".google.com") or domain == "google.co.uk" or domain.endswith(".google.co.uk"):
+            filtered.append(cookie)
+    return _select_cookie_bundle(filtered)
 
 
 def _cookie_rank(cookie: dict[str, Any]) -> tuple[int, int]:
@@ -264,9 +304,7 @@ def _select_cookie_bundle(cookies: list[dict[str, Any]]) -> tuple[str, str, list
 
 
 def _write_cookie_cache(secure_1psid: str, cookies: list[dict[str, Any]]) -> int:
-    cache_dir = _get_cookie_cache_dir()
-    cache_dir.mkdir(parents=True, exist_ok=True)
-    cache_path = cache_dir / f".cached_cookies_{secure_1psid}.json"
+    cache_path = get_cookie_cache_path(secure_1psid)
     filtered: list[dict[str, Any]] = []
     for cookie in cookies:
         domain = str(cookie.get("domain", "")).lstrip(".").lower()
@@ -286,6 +324,12 @@ def _write_cookie_cache(secure_1psid: str, cookies: list[dict[str, Any]]) -> int
         )
     cache_path.write_text(json.dumps(filtered, ensure_ascii=False), encoding="utf-8")
     return len(filtered)
+
+
+def get_cookie_cache_path(secure_1psid: str) -> Path:
+    cache_dir = _get_cookie_cache_dir()
+    cache_dir.mkdir(parents=True, exist_ok=True)
+    return cache_dir / f".cached_cookies_{secure_1psid}.json"
 
 
 def write_cookie_bundle_cache(bundle: CookieBundle) -> int:
@@ -312,6 +356,34 @@ def cookie_bundle_hash(bundle: CookieBundle) -> str:
     ]
     digest = sha256(json.dumps(normalized, ensure_ascii=False, sort_keys=True).encode("utf-8")).hexdigest()
     return f"sha256:{digest}"
+
+
+def iter_cookie_pair_candidates(bundle: CookieBundle) -> list[CookiePairCandidate]:
+    psid_values: list[str] = []
+    psidts_values: list[str] = []
+    for cookie in bundle.cookies:
+        name = cookie.get("name")
+        value = cookie.get("value")
+        if not value:
+            continue
+        if name == "__Secure-1PSID" and value not in psid_values:
+            psid_values.append(value)
+        elif name == "__Secure-1PSIDTS" and value not in psidts_values:
+            psidts_values.append(value)
+
+    if bundle.secure_1psid not in psid_values:
+        psid_values.insert(0, bundle.secure_1psid)
+    if bundle.secure_1psidts not in psidts_values:
+        psidts_values.insert(0, bundle.secure_1psidts)
+
+    candidates = [CookiePairCandidate(secure_1psid=psid, secure_1psidts=psidts) for psid in psid_values for psidts in psidts_values]
+    preferred = CookiePairCandidate(secure_1psid=bundle.secure_1psid, secure_1psidts=bundle.secure_1psidts)
+    ordered: list[CookiePairCandidate] = [preferred]
+    for candidate in candidates:
+        if candidate == preferred:
+            continue
+        ordered.append(candidate)
+    return ordered
 
 
 def _looks_like_cookie_pair(secure_1psid: str, secure_1psidts: str) -> bool:

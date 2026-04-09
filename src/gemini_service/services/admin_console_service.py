@@ -75,6 +75,45 @@ class AdminConsoleService:
         self._jobs: dict[str, ReauthJob] = {}
         self._jobs_lock = asyncio.Lock()
 
+    @staticmethod
+    def _summary_is_recovered(summary: AccountSummary | None) -> bool:
+        return bool(
+            summary
+            and summary.account_status == "AVAILABLE"
+            and summary.state in {"ready", "degraded"}
+        )
+
+    def _runtime_summary(self, account_id: str) -> AccountSummary | None:
+        runtime = self.pool.get_runtime(account_id)
+        return runtime.summary() if runtime is not None else None
+
+    def _complete_job_from_summary(
+        self,
+        job: ReauthJob,
+        *,
+        summary: AccountSummary,
+        source: str,
+        detail: str,
+    ) -> AdminReauthJobResponse:
+        if job.task is not None and job.task is not asyncio.current_task():
+            job.task.cancel()
+        job.task = None
+        job.status = "completed"
+        job.detail = detail
+        job.action_required = None
+        job.updated_at = _now_iso()
+        job.result = {
+            "source": source,
+            "recovery_source": "runtime",
+            "cookie_count": None,
+            "provider_status": summary.account_status,
+            "runtime_state": summary.state,
+            "account_models": summary.models,
+            "updated": False,
+            "code": "runtime_already_ready",
+        }
+        return self._job_response(job)
+
     async def close(self) -> None:
         async with self._jobs_lock:
             jobs = list(self._jobs.values())
@@ -270,6 +309,17 @@ class AdminConsoleService:
                 "runtime_state": runtime.effective_state.value if runtime else None,
             },
         )
+        runtime_summary = runtime.summary() if runtime is not None else None
+        if self._summary_is_recovered(runtime_summary):
+            response = self._complete_job_from_summary(
+                job,
+                summary=runtime_summary,
+                source="initial_runtime",
+                detail="Account is already routable; reauthentication is not required.",
+            )
+            async with self._jobs_lock:
+                self._jobs[job.job_id] = job
+            return response
         async with self._jobs_lock:
             self._jobs[job.job_id] = job
             job.task = asyncio.create_task(self._run_reauth_job(job.job_id))
@@ -279,6 +329,14 @@ class AdminConsoleService:
         job = await self._require_job(job_id)
         if job.status == "completed":
             return self._job_response(job)
+        runtime_summary = self._runtime_summary(job.account_id)
+        if self._summary_is_recovered(runtime_summary):
+            return self._complete_job_from_summary(
+                job,
+                summary=runtime_summary,
+                source="manual_runtime",
+                detail="Account is already routable; no additional reauthentication is required.",
+            )
         result = await self.recovery_service.recover_account(
             job.account_id,
             allow_browser_launch=False,
@@ -288,6 +346,8 @@ class AdminConsoleService:
 
     async def cancel_reauth_job(self, job_id: str) -> AdminReauthJobResponse:
         job = await self._require_job(job_id)
+        if job.status in {"completed", "failed", "cancelled"}:
+            return self._job_response(job)
         if job.task is not None:
             job.task.cancel()
             job.task = None
@@ -329,7 +389,11 @@ class AdminConsoleService:
             if self.refresh_daemon is not None:
                 self.refresh_daemon.force_sync_now(account_id)
             result = await self.recovery_service.recover_account(account_id, allow_browser_launch=False)
-            detail = result.detail
+            runtime_summary = self._runtime_summary(account_id)
+            if self._summary_is_recovered(runtime_summary) and result.status != "completed":
+                detail = "Account is already routable; no additional browser sync was required."
+            else:
+                detail = result.detail
             entry = self.browser_manager.get_entry(account_id)
         elif action == "pause-auto-refresh":
             entry = await self.browser_manager.set_auto_refresh(account_id, False)
@@ -438,6 +502,15 @@ class AdminConsoleService:
             except ServiceError:
                 return
             if job.status in {"completed", "failed", "cancelled"}:
+                return
+            runtime_summary = self._runtime_summary(job.account_id)
+            if self._summary_is_recovered(runtime_summary):
+                self._complete_job_from_summary(
+                    job,
+                    summary=runtime_summary,
+                    source="browser_monitor_runtime",
+                    detail="Account became routable again while browser monitoring was active.",
+                )
                 return
             if asyncio.get_running_loop().time() >= deadline:
                 job.status = "failed"

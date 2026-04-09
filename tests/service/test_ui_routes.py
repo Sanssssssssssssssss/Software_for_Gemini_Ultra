@@ -370,7 +370,7 @@ def test_ui_admin_reauth_job_flow(client_factory, monkeypatch, isolated_service_
 
         started = client.post("/ui/api/admin/accounts/ops-account-reauth/reauth")
         assert started.status_code == 200
-        assert started.json()["status"] in {"queued", "validating_provider"}
+        assert started.json()["status"] in {"queued", "validating_provider", "completed"}
 
         completed = client.post(f"/ui/api/admin/reauth-jobs/{started.json()['job_id']}/complete")
         assert completed.status_code == 200
@@ -415,7 +415,7 @@ def test_ui_admin_reauth_job_can_complete_from_existing_profile(client_factory, 
 
         started = client.post("/ui/api/admin/accounts/mock-ready-1/reauth")
         assert started.status_code == 200
-        assert started.json()["status"] in {"queued", "validating_provider"}
+        assert started.json()["status"] in {"queued", "validating_provider", "completed"}
 
         time.sleep(0.1)
         jobs = client.get("/ui/api/admin/reauth-jobs")
@@ -527,7 +527,7 @@ def test_ui_admin_reauth_job_auto_completes_after_browser_login(client_factory, 
 
         started = client.post("/ui/api/admin/accounts/ops-account-auto-reauth/reauth")
         assert started.status_code == 200
-        assert started.json()["status"] in {"queued", "validating_provider"}
+        assert started.json()["status"] in {"queued", "validating_provider", "completed"}
 
         time.sleep(0.25)
         jobs = client.get("/ui/api/admin/reauth-jobs")

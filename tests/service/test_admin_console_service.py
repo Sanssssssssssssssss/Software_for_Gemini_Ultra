@@ -6,6 +6,7 @@ from pathlib import Path
 from gemini_service.core.config import Settings
 from gemini_service.core.security import AuthContext
 from gemini_service.schemas.accounts import AccountConfig, AccountInventory, save_account_inventory
+from gemini_service.schemas.common import AccountSummary
 from gemini_service.services.admin_console_service import AdminConsoleService
 
 
@@ -49,6 +50,15 @@ class _FakePool:
 
     async def sync_inventory(self, force_refresh=True):
         return None
+
+
+class _FakeRuntime:
+    def __init__(self, summary: AccountSummary) -> None:
+        self._summary = summary
+        self.effective_state = type("State", (), {"value": summary.state})()
+
+    def summary(self) -> AccountSummary:
+        return self._summary
 
 
 class _FakeRecovery:
@@ -154,3 +164,62 @@ def test_admin_console_browser_actions_and_reauth_job(tmp_path: Path):
 
     dashboard = asyncio.run(service.build_dashboard(AuthContext(subject="admin", role="admin", source="ui")))
     assert dashboard.inventory_accounts[0].browser_online is True
+
+
+def test_admin_console_short_circuits_reauth_when_runtime_is_already_ready(tmp_path: Path):
+    accounts_path = tmp_path / "accounts.json"
+    save_account_inventory(
+        accounts_path,
+        AccountInventory(
+            accounts=[
+                AccountConfig(
+                    account_id="acc-1",
+                    secure_1psid="cookie",
+                    secure_1psidts="sidts-cookie",
+                    cookie_source_browser="chrome",
+                    cookie_source_profile_dir="data/browser-profiles/acc-1",
+                )
+            ]
+        ).model_dump(mode="json"),
+    )
+    pool = _FakePool()
+    pool.runtime = _FakeRuntime(
+        AccountSummary(
+            account_id="acc-1",
+            state="ready",
+            account_status="AVAILABLE",
+            status_description="Account is authorized and has normal access.",
+            models=["gemini-3-pro"],
+            active_requests=0,
+            queue_depth=0,
+            configured_max_concurrency=1,
+            cooldown_until=None,
+            last_error=None,
+            recent_errors=[],
+            failure_count=0,
+            last_transition_at="2026-04-09T00:00:00+00:00",
+            state_reason="ready",
+        )
+    )
+    service = AdminConsoleService(
+        settings=Settings(accounts_config_path=str(accounts_path)),
+        repository=_FakeRepository(),
+        pool=pool,
+        chat_service=_FakeChatService(),
+        asset_service=None,  # type: ignore[arg-type]
+        recovery_service=_FakeRecovery(),
+        browser_manager=_FakeBrowserManager(),
+        refresh_daemon=_FakeDaemon(),
+        telemetry=None,
+    )
+
+    job = asyncio.run(service.start_reauth_job("acc-1"))
+    assert job.status == "completed"
+    assert job.result["code"] == "runtime_already_ready"
+
+    completed = asyncio.run(service.complete_reauth_job(job.job_id))
+    assert completed.status == "completed"
+    assert completed.result["code"] == "runtime_already_ready"
+
+    cancelled = asyncio.run(service.cancel_reauth_job(job.job_id))
+    assert cancelled.status == "completed"

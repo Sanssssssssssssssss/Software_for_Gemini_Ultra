@@ -6,7 +6,10 @@ from pathlib import Path
 
 from ..core.browser_cookie_sync import (
     BrowserLoginSession,
+    CookiePairCandidate,
     CookieBundle,
+    get_cookie_cache_path,
+    iter_cookie_pair_candidates,
     write_cookie_bundle_cache,
 )
 from ..core.config import Settings
@@ -243,14 +246,42 @@ class AccountRecoveryService:
         recovery_source: str,
         base_detail: str,
     ) -> AccountRecoveryResult:
-        candidate = account.model_copy(
-            update={
-                "secure_1psid": bundle.secure_1psid,
-                "secure_1psidts": bundle.secure_1psidts,
-            }
-        )
-        probe_summary = await self.pool.probe_candidate(candidate)
+        cache_path = get_cookie_cache_path(bundle.secure_1psid)
+        previous_cache = cache_path.read_text(encoding="utf-8") if cache_path.exists() else None
+        write_cookie_bundle_cache(bundle)
+        candidate = None
+        probe_summary = None
+        pairs = iter_cookie_pair_candidates(bundle)
+        if not pairs and bundle.secure_1psid and bundle.secure_1psidts:
+            pairs = [
+                CookiePairCandidate(
+                    secure_1psid=bundle.secure_1psid,
+                    secure_1psidts=bundle.secure_1psidts,
+                    psid_domain=None,
+                    psidts_domain=None,
+                )
+            ]
+        for pair in pairs:
+            next_candidate = account.model_copy(
+                update={
+                    "secure_1psid": pair.secure_1psid,
+                    "secure_1psidts": pair.secure_1psidts,
+                }
+            )
+            next_summary = await self.pool.probe_candidate(next_candidate)
+            if self._summary_is_recovered(next_summary):
+                candidate = next_candidate
+                probe_summary = next_summary
+                break
+            if probe_summary is None:
+                probe_summary = next_summary
+        if probe_summary is None:
+            raise RuntimeError("No candidate probe result was produced during cookie validation.")
         if not self._summary_is_recovered(probe_summary):
+            if previous_cache is None:
+                cache_path.unlink(missing_ok=True)
+            else:
+                cache_path.write_text(previous_cache, encoding="utf-8")
             return AccountRecoveryResult(
                 account_id=account.account_id,
                 status="failed",
@@ -267,11 +298,11 @@ class AccountRecoveryService:
 
         updated = self._write_recovered_account(
             account_id=account.account_id,
-            secure_1psid=bundle.secure_1psid,
-            secure_1psidts=bundle.secure_1psidts,
+            secure_1psid=candidate.secure_1psid,
+            secure_1psidts=candidate.secure_1psidts,
             recovery_source=recovery_source,
         )
-        cookie_count = write_cookie_bundle_cache(bundle)
+        cookie_count = len(bundle.cookies)
         await self.pool.sync_inventory(force_refresh=True)
         runtime = await self.pool.refresh_account(account.account_id)
         summary = runtime.summary()
