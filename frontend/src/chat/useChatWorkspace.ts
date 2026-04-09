@@ -37,6 +37,7 @@ import {
   type SessionPreview,
   type UiMessage,
 } from "./types";
+import { createClientId } from "../lib/ids";
 
 type RuntimeState = {
   abortController: AbortController | null;
@@ -524,7 +525,7 @@ export function useChatWorkspace({ navigate }: UseChatWorkspaceOptions) {
     }));
 
     nextFiles.forEach((file) => {
-      const localId = crypto.randomUUID();
+      const localId = createClientId();
       const previewUrl = file.type.startsWith("image/") ? URL.createObjectURL(file) : undefined;
       const controller = new AbortController();
       const initialUpload: PendingUpload = {
@@ -655,13 +656,13 @@ export function useChatWorkspace({ navigate }: UseChatWorkspaceOptions) {
       }));
 
       const userMessage: UiMessage = {
-        id: crypto.randomUUID(),
+        id: createClientId(),
         role: "user",
         content: activeTrimmed || "[附件消息]",
         parts: messageParts,
         createdAt: new Date().toISOString(),
       };
-      const assistantMessageId = crypto.randomUUID();
+      const assistantMessageId = createClientId();
       const assistantPlaceholder: UiMessage = {
         id: assistantMessageId,
         role: "assistant",
@@ -692,7 +693,7 @@ export function useChatWorkspace({ navigate }: UseChatWorkspaceOptions) {
             : { message: activeTrimmed }),
           stream: false,
           temporary: activeReadyUploads.length ? true : activeDraft.temporaryMode,
-          idempotency_key: crypto.randomUUID(),
+          idempotency_key: createClientId(),
         });
         startTransition(() => {
           updateMessage(targetSessionId!, assistantMessageId, (message) => ({
@@ -738,7 +739,7 @@ export function useChatWorkspace({ navigate }: UseChatWorkspaceOptions) {
             : { message: activeTrimmed }),
           stream: true,
           temporary: activeReadyUploads.length ? true : activeDraft.temporaryMode,
-          idempotency_key: crypto.randomUUID(),
+          idempotency_key: createClientId(),
         },
         controller.signal,
       );
