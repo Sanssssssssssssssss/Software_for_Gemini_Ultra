@@ -122,6 +122,166 @@ Run `cd frontend && npm run test:e2e` to execute the Playwright browser suite ag
 The service now has a multimodal backend contract foundation: uploads land in controlled storage through `POST /v1/uploads`, messages can send either legacy `{message: "..."}` payloads or structured `parts`, and uploaded assets can be inspected through `GET /v1/assets/{asset_id}` and `GET /v1/assets/{asset_id}/content`. Text-only clients remain backward compatible.
 Multimodal V1 currently supports `png`, `jpg`, `jpeg`, `webp`, `pdf`, and `pptx` inputs, plus text and generated-image outputs. Large binary assets are stored in controlled filesystem storage instead of the SQL database, and attachment-bearing turns default to `temporary=true` unless the caller explicitly opts out.
 
+## Basic Setup Guide
+
+This section is the quickest way to make the service usable for real people on your LAN.
+
+### 1. Create UI login accounts
+
+The current built-in login model supports:
+
+- one administrator account
+- one standard user account
+
+Edit your local [`.env`](.env) and set:
+
+```dotenv
+GEMINI_SERVICE_UI_USERNAME=admin
+GEMINI_SERVICE_UI_PASSWORD=change-this-admin-password
+
+GEMINI_SERVICE_UI_USER_USERNAME=tester
+GEMINI_SERVICE_UI_USER_PASSWORD=change-this-user-password
+```
+
+Behavior:
+
+- the admin account can access `/admin`, manage Gemini accounts, run reauthentication, export sessions, and operate browser recovery
+- the standard user can only access `/ui/chat` and their own sessions
+
+If you need more than one normal user, the next step is to extend the login layer to a user table or internal SSO. The current `.env` approach is intentionally simple and local-first.
+
+### 2. Create API tokens
+
+If you want script or backend access, define `GEMINI_SERVICE_API_TOKENS` in [`.env`](.env):
+
+```dotenv
+GEMINI_SERVICE_API_TOKENS=alice|token-user-1|user,bob|token-admin-1|admin
+```
+
+Rules:
+
+- format is `subject|token|role`
+- supported roles are `user` and `admin`
+- plain token strings are still accepted and treated as `admin` for backward compatibility
+
+### 3. Add a Gemini account
+
+There are two supported ways.
+
+Option A: add it in the admin console
+
+1. Start the service
+2. Sign in as admin
+3. Open `/admin`
+4. Click `新建账号`
+5. Fill at least:
+   - `账号 ID`
+   - `浏览器`
+   - `profile 目录`
+   - `最大并发`
+6. Save the account
+7. Click `重登` or `启动浏览器`
+8. Log in to Gemini in the dedicated browser window
+
+Option B: add it directly in [`config/accounts.json`](config/accounts.json)
+
+Example:
+
+```json
+{
+  "accounts": [
+    {
+      "account_id": "primary-ultra-1",
+      "enabled": true,
+      "provider_backend": "gemini_web",
+      "cookie_source_browser": "chrome",
+      "cookie_source_profile_dir": "data/browser-profiles/primary-ultra-1",
+      "max_concurrency": 4,
+      "cooldown_seconds": 60,
+      "request_timeout_seconds": 450,
+      "verify_ssl": true,
+      "tags": ["default"]
+    }
+  ]
+}
+```
+
+Recommended rules:
+
+- one `account_id` maps to one dedicated browser profile
+- do not reuse your daily personal browser profile as the default service profile
+- prefer one dedicated profile directory per Gemini account
+- start conservative with `max_concurrency`; one real web account usually cannot sustain large long-form parallel loads
+
+### 4. Reauthenticate an account
+
+The intended operator flow is now:
+
+1. Open `/admin`
+2. Find the account
+3. Click `重登`
+4. If the browser is already online, the service reuses it
+5. If not, the service launches the dedicated browser/profile for that account
+6. Complete Gemini login in that same browser window
+7. The service polls cookies in the background and validates the provider
+8. The account becomes `READY` only after Gemini itself reports `AVAILABLE`
+
+Important:
+
+- you do not need to hand-copy cookies
+- you do not need to close the browser window to trigger sync
+- the browser can remain open for later background refresh
+
+### 5. Start for LAN use
+
+To make the UI reachable from another machine, bind the server to all interfaces:
+
+```sh
+python scripts/run_local.py --env-file .env --host 0.0.0.0 --port 8016
+```
+
+Then open from another computer using the service machine's LAN IP:
+
+```text
+http://<LAN-IP>:8016/ui/login
+http://<LAN-IP>:8016/ui/chat
+http://<LAN-IP>:8016/admin
+```
+
+Do not use `127.0.0.1` from another machine. That points to the other machine itself, not the service host.
+
+### 6. Validate before asking users to try it
+
+Run:
+
+```sh
+python scripts/doctor.py --env-file .env
+```
+
+Check:
+
+- `/healthz` returns `ok`
+- `/readyz` shows at least one ready account
+- admin can sign in and see `/admin`
+- a standard user can sign in and use `/ui/chat`
+- the Gemini account shows `READY`
+
+### 7. What to do if login still fails
+
+Go to `/admin` and inspect the target account:
+
+- `READY`: account is routable
+- `REAUTH`: login cookies are invalid for Gemini
+- `COOLDOWN`: account is temporarily cooling down
+- `BLOCKED`: provider side rejected or blocked the account
+- `OFFLINE`: browser/session or provider runtime is unavailable
+
+If the account is not `READY`:
+
+1. click `重登`
+2. log in to Gemini in the dedicated browser window
+3. wait for the admin console to move the job to completed and the runtime state back to `READY`
+
 ## Startup notes
 
 - New session creation is now decoupled from immediate execution capacity. A healthy but busy account can still be assigned to a new sticky session; actual execution waits in the configured queue/backpressure path.
