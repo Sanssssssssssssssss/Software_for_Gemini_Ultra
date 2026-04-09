@@ -39,6 +39,14 @@ class Settings(BaseSettings):
     cookie_autosync_headless: bool = True
     cookie_autosync_timeout_seconds: int = 20
     cookie_autosync_start_url: str = "https://gemini.google.com/app"
+    browser_manager_enabled: bool = True
+    browser_keepalive_on_shutdown: bool = True
+    browser_base_debug_port: int = 9330
+    browser_sync_interval_seconds: int = 120
+    browser_recovery_interval_seconds: int = 5
+    browser_state_path: str = "data/browser-sessions.json"
+    browser_profile_root: str = "data/browser-profiles"
+    browser_reuse_existing: bool = True
     admin_reauth_poll_interval_seconds: float = 2.0
     admin_reauth_timeout_seconds: int = 600
     ui_username: str = "admin"

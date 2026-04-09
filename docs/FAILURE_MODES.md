@@ -51,3 +51,13 @@ If files are deleted from local storage outside the service, metadata may remain
 ## Startup environment drift
 
 Cross-platform local startup can still fail when browser binaries, browser profile directories, frontend build output, database directories, or asset roots are missing or not writable. Use `python scripts/doctor.py --env-file .env` and `/setup/status` before assuming a cookie or provider outage.
+
+## Managed browser session drift
+
+Persistent browser management reduces manual cookie handling, but it introduces a new control plane:
+
+- a browser window can stay open while its debugging endpoint is no longer reachable
+- a service restart can find a stale registry entry whose port is no longer alive
+- a browser profile can still be logged into Google while Gemini itself is not ready
+
+The mitigation is to treat browser session health and provider recovery as separate states. Cookie changes must only be committed after provider validation succeeds.

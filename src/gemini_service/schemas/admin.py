@@ -23,6 +23,14 @@ class AdminManagedAccount(BaseModel):
     has_cookie_bundle: bool = False
     last_recovery_at: str | None = None
     last_recovery_source: str | None = None
+    browser_online: bool = False
+    browser_state: str = "offline"
+    browser_debug_port: int | None = None
+    browser_auto_refresh_enabled: bool = True
+    last_cookie_sync_at: str | None = None
+    last_provider_validation_at: str | None = None
+    last_good_cookie_at: str | None = None
+    browser_last_error: str | None = None
     runtime: AccountSummary | None = None
 
 
@@ -67,6 +75,7 @@ class AdminReauthJobResponse(BaseModel):
     updated_at: str
     action_required: str | None = None
     launch_url: str | None = None
+    recovery_source: str | None = None
     result: dict[str, Any] = Field(default_factory=dict)
 
 

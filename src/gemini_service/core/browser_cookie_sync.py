@@ -3,11 +3,13 @@ from __future__ import annotations
 import json
 import os
 import shutil
+import signal
 import socket
 import subprocess
 import sys
 import time
 from dataclasses import dataclass
+from hashlib import sha256
 from pathlib import Path
 from typing import Any
 from urllib.error import URLError
@@ -67,8 +69,10 @@ class BrowserLoginSession:
     browser_path: Path
     profile_dir: Path
     port: int
-    process: subprocess.Popen[Any]
+    process: subprocess.Popen[Any] | None
     start_url: str
+    pid: int | None = None
+    launched_by_service: bool = True
 
 
 @dataclass(slots=True)
@@ -80,6 +84,25 @@ class CookieBundle:
 
 def _is_process_running(process: subprocess.Popen[Any]) -> bool:
     return process.poll() is None
+
+
+def _pid_is_running(pid: int | None) -> bool:
+    if pid is None or pid <= 0:
+        return False
+    try:
+        if sys.platform == "win32":
+            result = subprocess.run(
+                ["tasklist", "/FI", f"PID eq {pid}"],
+                check=False,
+                capture_output=True,
+                text=True,
+                timeout=5,
+            )
+            return str(pid) in (result.stdout or "")
+        os.kill(pid, 0)
+        return True
+    except Exception:
+        return False
 
 
 def load_inventory(path: Path) -> dict[str, Any]:
@@ -178,6 +201,14 @@ def _wait_for_cdp(port: int, timeout_seconds: int) -> None:
     raise TimeoutError("Timed out waiting for the browser debugging endpoint.")
 
 
+def browser_debug_endpoint_available(port: int, timeout_seconds: int = 2) -> bool:
+    try:
+        _wait_for_cdp(port, timeout_seconds=max(1, timeout_seconds))
+        return True
+    except Exception:
+        return False
+
+
 def _extract_cookies_via_cdp(port: int) -> tuple[str, str, list[dict[str, Any]]] | None:
     try:
         from playwright.sync_api import sync_playwright
@@ -260,6 +291,28 @@ def write_cookie_bundle_cache(bundle: CookieBundle) -> int:
     return _write_cookie_cache(bundle.secure_1psid, bundle.cookies)
 
 
+def cookie_bundle_hash(bundle: CookieBundle) -> str:
+    normalized = [
+        {
+            "name": cookie.get("name"),
+            "value": cookie.get("value"),
+            "domain": cookie.get("domain"),
+            "path": cookie.get("path"),
+            "expires": cookie.get("expires"),
+        }
+        for cookie in sorted(
+            bundle.cookies,
+            key=lambda item: (
+                str(item.get("domain", "")),
+                str(item.get("path", "")),
+                str(item.get("name", "")),
+            ),
+        )
+    ]
+    digest = sha256(json.dumps(normalized, ensure_ascii=False, sort_keys=True).encode("utf-8")).hexdigest()
+    return f"sha256:{digest}"
+
+
 def _looks_like_cookie_pair(secure_1psid: str, secure_1psidts: str) -> bool:
     return (
         bool(secure_1psid)
@@ -314,12 +367,7 @@ def extract_cookie_bundle_from_profile(
             cookies=cookies,
         )
     finally:
-        process.terminate()
-        try:
-            process.wait(timeout=10)
-        except subprocess.TimeoutExpired:
-            process.kill()
-            process.wait(timeout=10)
+        terminate_browser_process(process=process, pid=process.pid)
 
 
 def sync_cookies_from_profile(
@@ -349,9 +397,10 @@ def launch_browser_login_session(
     profile_dir: Path,
     browser_path: Path,
     start_url: str,
+    debug_port: int | None = None,
 ) -> BrowserLoginSession:
     profile_dir = ensure_profile_dir(profile_dir)
-    port = _find_free_port()
+    port = debug_port or _find_free_port()
     args = [
         str(browser_path),
         f"--user-data-dir={profile_dir}",
@@ -383,18 +432,50 @@ def launch_browser_login_session(
         port=port,
         process=process,
         start_url=start_url,
+        pid=process.pid,
+        launched_by_service=True,
     )
 
 
-def terminate_browser_login_session(session: BrowserLoginSession) -> None:
-    if session.process.poll() is not None:
+def terminate_browser_process(*, process: subprocess.Popen[Any] | None, pid: int | None) -> None:
+    if process is not None and process.poll() is None:
+        process.terminate()
+        try:
+            process.wait(timeout=10)
+            return
+        except subprocess.TimeoutExpired:
+            process.kill()
+            process.wait(timeout=10)
+            return
+
+    if pid is None:
         return
-    session.process.terminate()
+
     try:
-        session.process.wait(timeout=10)
-    except subprocess.TimeoutExpired:
-        session.process.kill()
-        session.process.wait(timeout=10)
+        if sys.platform == "win32":
+            subprocess.run(
+                ["taskkill", "/PID", str(pid), "/T", "/F"],
+                check=False,
+                capture_output=True,
+                text=True,
+                timeout=10,
+            )
+        else:
+            os.kill(pid, signal.SIGTERM)
+    except Exception:
+        return
+
+
+def terminate_browser_login_session(session: BrowserLoginSession) -> None:
+    terminate_browser_process(process=session.process, pid=session.pid)
+
+
+def is_browser_login_session_alive(session: BrowserLoginSession, *, timeout_seconds: int = 2) -> bool:
+    if session.process is not None and session.process.poll() is not None:
+        return False
+    if session.process is None and session.pid is not None and not _pid_is_running(session.pid):
+        return False
+    return browser_debug_endpoint_available(session.port, timeout_seconds=timeout_seconds)
 
 
 def extract_cookie_bundle_from_browser_session(
@@ -420,6 +501,47 @@ def extract_cookie_bundle_from_browser_session(
     )
 
 
+def focus_browser_login_session(
+    session: BrowserLoginSession,
+    *,
+    start_url: str | None = None,
+    timeout_seconds: int = 10,
+) -> None:
+    _wait_for_cdp(session.port, timeout_seconds=min(timeout_seconds, 20))
+    try:
+        from playwright.sync_api import sync_playwright
+    except ImportError as exc:
+        raise RuntimeError(
+            "Playwright is required for browser focus operations. Install it in the active environment first."
+        ) from exc
+
+    target_url = start_url or session.start_url
+    with sync_playwright() as playwright:
+        browser = playwright.chromium.connect_over_cdp(f"http://127.0.0.1:{session.port}")
+        try:
+            page_to_focus = None
+            for context in browser.contexts:
+                for page in context.pages:
+                    url = page.url or ""
+                    if "gemini.google.com" in url:
+                        page_to_focus = page
+                        break
+                if page_to_focus is not None:
+                    break
+            if page_to_focus is None:
+                if not browser.contexts:
+                    context = browser.new_context()
+                else:
+                    context = browser.contexts[0]
+                page_to_focus = context.new_page()
+                page_to_focus.goto(target_url, wait_until="domcontentloaded", timeout=timeout_seconds * 1000)
+            page_to_focus.bring_to_front()
+            if target_url and "gemini.google.com" not in (page_to_focus.url or ""):
+                page_to_focus.goto(target_url, wait_until="domcontentloaded", timeout=timeout_seconds * 1000)
+        finally:
+            browser.close()
+
+
 def collect_cookies_from_browser_session(
     session: BrowserLoginSession,
     *,
@@ -438,6 +560,7 @@ def sync_single_account_from_inventory(
     start_url: str,
     default_browser: str = "chrome",
     headless: bool = True,
+    commit_inventory: bool = False,
 ) -> CookieSyncResult:
     results = sync_inventory_from_browser_profiles(
         accounts_path=accounts_path,
@@ -446,6 +569,7 @@ def sync_single_account_from_inventory(
         default_browser=default_browser,
         headless=headless,
         only_account_id=account_id,
+        commit_inventory=commit_inventory,
     )
     if not results:
         return CookieSyncResult(
@@ -466,6 +590,7 @@ def sync_inventory_from_browser_profiles(
     default_browser: str = "chrome",
     headless: bool = True,
     only_account_id: str | None = None,
+    commit_inventory: bool = False,
 ) -> list[CookieSyncResult]:
     payload = load_inventory(accounts_path)
     accounts = payload.get("accounts", [])
@@ -549,9 +674,10 @@ def sync_inventory_from_browser_profiles(
             account.get("secure_1psid") != secure_1psid
             or account.get("secure_1psidts") != secure_1psidts
         ):
-            account["secure_1psid"] = secure_1psid
-            account["secure_1psidts"] = secure_1psidts
-            dirty = True
+            if commit_inventory:
+                account["secure_1psid"] = secure_1psid
+                account["secure_1psidts"] = secure_1psidts
+                dirty = True
             updated = True
         else:
             updated = False
@@ -568,7 +694,7 @@ def sync_inventory_from_browser_profiles(
                 )
             )
 
-    if dirty:
+    if dirty and commit_inventory:
         save_inventory(accounts_path, payload)
 
     return results

@@ -6,15 +6,60 @@
 - `GET /readyz`: readiness based on auth config, account inventory, and ready account count
 - `GET /metrics`: request and runtime metrics
 - `/admin`: account pool and recent session visibility
-- `/ui/api/admin/dashboard`: admin control console data for account inventory, reauth jobs, sessions, and assets
+- `/ui/api/admin/dashboard`: admin control console data for account inventory, browser sessions, reauth jobs, sessions, and assets
 - `/ui/api/admin/accounts`: add or update managed account inventory entries
-- `/ui/api/admin/accounts/{account_id}/reauth`: launch a local browser reauthentication job
-- `/ui/api/admin/reauth-jobs/{job_id}/complete`: force an immediate sync attempt for a running browser job
+- `/ui/api/admin/accounts/{account_id}/reauth`: launch or reuse a persistent browser reauthentication job
+- `/ui/api/admin/reauth-jobs/{job_id}/complete`: force an immediate provider-validated sync attempt for a running browser job
+- `/ui/api/admin/accounts/{account_id}/browser/{action}`: start, focus, sync, stop, pause, or resume a managed browser session
 - `/ui/api/admin/sessions/{session_id}/export`: export a single session as JSON or Markdown
 - `POST /v1/admin/accounts/{account_id}/actions/{action}`: admin-only runtime actions
 - `POST /v1/batches`: persisted background batch execution
 - `POST /v1/uploads`: controlled asset ingest for multimodal requests
 - `GET /v1/assets/{asset_id}`: asset metadata and ownership checks
+
+## Incident: account shows `reauth_required`
+
+Likely causes:
+
+- cookie expired
+- Google invalidated the session
+- account requires ToS acceptance or re-login
+
+Actions:
+
+1. Open `/admin` and start reauth for the affected account.
+2. The service first tries to reuse that account's already-running managed browser session.
+3. If none is available, it launches the same dedicated account profile and keeps that browser open.
+4. Finish the Google / Gemini login in that browser and confirm `gemini.google.com/app` can answer one message.
+5. Watch the reauth job move through `awaiting_login -> collecting_cookies -> validating_provider -> completed`.
+6. Confirm `/v1/accounts` and `/admin` show the account as `ready` or `degraded`.
+
+Important notes:
+
+- Cancelling a reauth job only stops polling; it does not close the managed browser window.
+- Use the explicit browser `stop` action only when you truly want to terminate that account's browser session.
+- Inventory writes now happen only after provider validation succeeds. A bad cookie capture must not overwrite the last known good inventory state.
+
+## Incident: startup warns about browser autosync
+
+Likely causes:
+
+- Chrome or Edge is not installed in a standard location on this machine
+- the configured browser profile directory does not exist
+- the service user cannot read that browser profile
+- the managed browser registry path is not writable
+
+Actions:
+
+1. Run `python scripts/doctor.py --env-file .env`.
+2. Inspect these checks:
+   - `cookie_autosync_browser:*`
+   - `cookie_autosync_profile:*`
+   - `browser_profile_root`
+   - `browser_state_path`
+3. If the browser is installed in a non-standard path, set `cookie_source_browser_path` for the affected account.
+4. If the profile directory is wrong or missing, use the Admin console to save the correct dedicated profile, or run `python scripts/playwright_bootstrap.py --account-id <account_id>`.
+5. If you need the service up immediately, start with `python scripts/run_local.py --env-file .env --skip-cookie-sync`.
 
 ## Incident: upload succeeds locally but message send fails
 
@@ -29,7 +74,7 @@ Actions:
 1. Inspect application logs for `upload_completed`, `provider_submit_started`, and `provider_submit_failed`.
 2. Verify the asset still shows `status=available` through `GET /v1/assets/{asset_id}`.
 3. Confirm the same `owner_subject` is sending the message and reading the session.
-4. If the upload is no longer needed, allow TTL cleanup or delete the orphaned asset from storage during maintenance.
+4. If the upload is no longer needed, allow TTL cleanup or delete the orphaned asset during maintenance.
 
 ## Incident: asset download returns `asset_not_available`
 
@@ -44,46 +89,7 @@ Actions:
 1. Check `/admin` recent file activity and `/metrics` asset cleanup counters.
 2. Confirm whether the asset `expires_at` timestamp has elapsed.
 3. Ask the user to upload the file again if the asset was intentionally temporary.
-4. If cleanup happened too aggressively, increase `GEMINI_SERVICE_ASSET_TTL_HOURS` or `GEMINI_SERVICE_ASSET_ORPHAN_GRACE_HOURS`.
-
-## Incident: account shows `reauth_required`
-
-Likely causes:
-
-- cookie expired
-- Google invalidated the session
-- account requires ToS acceptance or re-login
-
-Actions:
-
-1. Re-authenticate the affected Google account in a browser.
-2. Update `config/accounts.json` with fresh `__Secure-1PSID` and `__Secure-1PSIDTS`.
-3. Use the admin page or admin API action to refresh the runtime after the new cookies are in place.
-4. Confirm `/v1/accounts` and `/admin` show the account as `ready` or `degraded`, then run a smoke test.
-5. If you are operating locally, prefer the Admin console's "一键重登" flow:
-   - click "一键重登" on the affected account
-   - the service first validates whether the configured profile can already recover Gemini without opening a new browser
-   - if that is not enough, it opens a dedicated browser window for that specific account/profile on the service machine
-   - finish the Google / Gemini login in that browser and keep it open for a few seconds
-   - the reauth job now auto-polls and only flips to `completed` after the provider itself returns `AVAILABLE`
-   - only use "立即同步" as a manual fallback if the browser is already logged in but the job has not flipped to completed yet
-   - confirm the account runtime returns to `ready`
-
-## Incident: startup warns about browser autosync
-
-Likely causes:
-
-- Chrome or Edge is not installed in a standard location on this machine
-- the configured browser profile directory does not exist
-- the service user cannot read that browser profile
-
-Actions:
-
-1. Run `python scripts/doctor.py --env-file .env` and inspect the `cookie_autosync_*` checks.
-2. If the browser is installed in a non-standard path, set `cookie_source_browser_path` for the affected account.
-3. If the profile directory is wrong or missing, re-run `python scripts/playwright_bootstrap.py` or update `cookie_source_profile_dir`.
-4. Cookie autosync now also refreshes the upstream `gemini_webapi` cookie cache, but inventory writes are only committed after provider validation succeeds. If the service was already running with stale in-memory cookies, use the admin `refresh` action or restart the service after autosync completes.
-5. If you need the service up immediately, start with `python scripts/run_local.py --env-file .env --skip-cookie-sync`.
+4. If cleanup happened too aggressively, increase `GEMINI_SERVICE_ASSET_DEFAULT_TTL_HOURS` or `GEMINI_SERVICE_ASSET_ORPHAN_GRACE_HOURS`.
 
 ## Incident: one session reports `session_busy`
 

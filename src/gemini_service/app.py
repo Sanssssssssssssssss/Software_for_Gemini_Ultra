@@ -28,6 +28,8 @@ from .services.asset_service import AssetService
 from .services.admin_console_service import AdminConsoleService
 from .services.batch_service import BatchService
 from .services.chat_service import ChatService
+from .services.cookie_refresh_daemon import CookieRefreshDaemon
+from .services.persistent_browser_manager import PersistentBrowserManager
 from .storage.local import LocalAssetStorage
 
 
@@ -38,9 +40,12 @@ async def lifespan(app: FastAPI):
     pool = AccountPool(settings)
     repository = ChatRepository(settings.database_url)
     asset_storage = LocalAssetStorage(settings.asset_root_path)
+    browser_manager = PersistentBrowserManager(settings)
     await repository.start()
     await pool.start()
+    await browser_manager.start()
     app.state.account_pool = pool
+    app.state.browser_manager = browser_manager
     asset_service = AssetService(
         settings=settings,
         repository=repository,
@@ -68,8 +73,17 @@ async def lifespan(app: FastAPI):
     account_recovery_service = AccountRecoveryService(
         settings=settings,
         pool=pool,
+        browser_manager=browser_manager,
     )
     app.state.account_recovery_service = account_recovery_service
+    cookie_refresh_daemon = CookieRefreshDaemon(
+        settings=settings,
+        pool=pool,
+        recovery_service=account_recovery_service,
+        browser_manager=browser_manager,
+    )
+    await cookie_refresh_daemon.start()
+    app.state.cookie_refresh_daemon = cookie_refresh_daemon
     admin_console_service = AdminConsoleService(
         settings=settings,
         repository=repository,
@@ -77,6 +91,8 @@ async def lifespan(app: FastAPI):
         chat_service=chat_service,
         asset_service=asset_service,
         recovery_service=account_recovery_service,
+        browser_manager=browser_manager,
+        refresh_daemon=cookie_refresh_daemon,
         telemetry=app.state.telemetry,
     )
     app.state.admin_console_service = admin_console_service
@@ -95,6 +111,8 @@ async def lifespan(app: FastAPI):
         yield
     finally:
         await admin_console_service.close()
+        await cookie_refresh_daemon.close()
+        await browser_manager.close()
         await asset_cleanup_service.close()
         await batch_service.close()
         await repository.close()

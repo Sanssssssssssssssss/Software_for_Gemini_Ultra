@@ -55,6 +55,7 @@ def main() -> None:
     from gemini_service.core.config import get_settings
     from gemini_service.services.account_pool import AccountPool
     from gemini_service.services.account_recovery_service import AccountRecoveryService
+    from gemini_service.services.persistent_browser_manager import PersistentBrowserManager
 
     get_settings.cache_clear()
     settings = get_settings()
@@ -63,11 +64,14 @@ def main() -> None:
         print("Checking persistent browser profiles for fresh Gemini cookies...")
         async def _recover_accounts():
             pool = AccountPool(settings)
+            browser_manager = PersistentBrowserManager(settings)
             await pool.start()
+            await browser_manager.start()
             try:
-                recovery = AccountRecoveryService(settings=settings, pool=pool)
+                recovery = AccountRecoveryService(settings=settings, pool=pool, browser_manager=browser_manager)
                 return await recovery.recover_accounts_for_startup()
             finally:
+                await browser_manager.close()
                 await pool.close()
 
         results = asyncio.run(_recover_accounts())

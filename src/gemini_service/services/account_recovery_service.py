@@ -7,19 +7,13 @@ from pathlib import Path
 from ..core.browser_cookie_sync import (
     BrowserLoginSession,
     CookieBundle,
-    collect_cookies_from_browser_session,
-    extract_cookie_bundle_from_browser_session,
-    extract_cookie_bundle_from_profile,
-    launch_browser_login_session,
-    normalize_profile_dir,
-    resolve_browser_path,
-    validate_profile_dir,
     write_cookie_bundle_cache,
 )
 from ..core.config import Settings
 from ..schemas.accounts import AccountConfig, AccountInventory, AccountInventoryIssue, load_account_inventory, save_account_inventory
 from ..schemas.common import AccountSummary
 from .account_pool import AccountPool
+from .persistent_browser_manager import PersistentBrowserManager
 
 
 @dataclass(slots=True)
@@ -42,9 +36,20 @@ class AccountRecoveryResult:
 
 
 class AccountRecoveryService:
-    def __init__(self, *, settings: Settings, pool: AccountPool) -> None:
+    def __init__(
+        self,
+        *,
+        settings: Settings,
+        pool: AccountPool,
+        browser_manager: PersistentBrowserManager | None = None,
+    ) -> None:
         self.settings = settings
         self.pool = pool
+        self.browser_manager = browser_manager
+
+    @property
+    def accounts_path(self) -> Path:
+        return Path(self.settings.accounts_config_path)
 
     async def recover_account(
         self,
@@ -73,18 +78,7 @@ class AccountRecoveryService:
             base_detail = ""
 
         browser_name = (browser or account.cookie_source_browser or self.settings.cookie_autosync_browser).lower()
-        browser_path = resolve_browser_path(browser_name, account.cookie_source_browser_path)
-        if browser_path is None:
-            return AccountRecoveryResult(
-                account_id=account_id,
-                status="failed",
-                code="browser_not_found",
-                detail="Could not find the configured browser executable on this machine.",
-                browser=browser_name,
-                action="Install the browser or set cookie_source_browser_path for this account.",
-            )
-
-        if not account.cookie_source_profile_dir:
+        if not account.cookie_source_profile_dir and self.browser_manager is None:
             return AccountRecoveryResult(
                 account_id=account_id,
                 status="failed",
@@ -93,21 +87,7 @@ class AccountRecoveryService:
                 browser=browser_name,
                 action="Set cookie_source_profile_dir for this account in Admin before retrying reauth.",
             )
-
-        profile_dir = normalize_profile_dir(Path(self.settings.accounts_config_path), account.cookie_source_profile_dir)
-        valid_profile, profile_code, profile_action = validate_profile_dir(profile_dir)
-        if not valid_profile and browser_session is None and not (
-            allow_browser_launch and profile_code == "cookie_profile_missing"
-        ):
-            return AccountRecoveryResult(
-                account_id=account_id,
-                status="failed",
-                code=profile_code,
-                detail="The configured browser profile directory is missing or not accessible.",
-                browser=browser_name,
-                profile_dir=str(profile_dir),
-                action=profile_action,
-            )
+        profile_dir = self.browser_manager.resolve_profile_dir(account) if self.browser_manager else Path(account.cookie_source_profile_dir or "")
 
         if browser_session is not None:
             return await self._recover_from_browser_session(
@@ -116,55 +96,66 @@ class AccountRecoveryService:
                 profile_dir=profile_dir,
                 session=browser_session,
                 base_detail=base_detail,
+                recovery_source="browser_session",
+            )
+
+        if self.browser_manager is None:
+            return AccountRecoveryResult(
+                account_id=account_id,
+                status="failed",
+                code="browser_manager_disabled",
+                detail="Persistent browser management is disabled for this deployment.",
+                browser=browser_name,
+                profile_dir=str(profile_dir),
+                action="Enable GEMINI_SERVICE_BROWSER_MANAGER_ENABLED or reconfigure cookie sync.",
+            )
+
+        live_session = await self.browser_manager.attach_existing_session(account)
+        if live_session is not None:
+            return await self._recover_from_browser_session(
+                account=account,
+                browser=browser_name,
+                profile_dir=profile_dir,
+                session=live_session,
+                base_detail=base_detail,
+                recovery_source="live_browser_session",
+            )
+
+        if not allow_browser_launch:
+            return AccountRecoveryResult(
+                account_id=account_id,
+                status="failed",
+                code="browser_session_offline",
+                detail=self._join_detail(base_detail, "No live browser session is currently available for this account."),
+                browser=browser_name,
+                profile_dir=str(profile_dir),
+                action="Use Admin reauthentication to launch or focus the managed browser for this account.",
             )
 
         try:
-            bundle = extract_cookie_bundle_from_profile(
-                browser=browser_name,
-                profile_dir=profile_dir,
-                browser_path=browser_path,
-                start_url=self.settings.cookie_autosync_start_url,
-                timeout_seconds=self.settings.cookie_autosync_timeout_seconds,
-                headless=self.settings.cookie_autosync_headless,
-            )
+            session = await self.browser_manager.ensure_session(account)
         except Exception as exc:
-            if not allow_browser_launch:
-                return AccountRecoveryResult(
-                    account_id=account_id,
-                    status="failed",
-                    code="cookie_sync_failed",
-                    detail=self._join_detail(base_detail, "Could not collect valid Gemini cookies from the configured browser profile."),
-                    browser=browser_name,
-                    profile_dir=str(profile_dir),
-                    action=f"Log into Gemini in that browser profile and retry. Details: {exc}",
-                )
-
-            session = launch_browser_login_session(
-                browser=browser_name,
-                profile_dir=profile_dir,
-                browser_path=browser_path,
-                start_url=self.settings.cookie_autosync_start_url,
-            )
             return AccountRecoveryResult(
                 account_id=account_id,
-                status="awaiting_login",
-                code="interactive_login_required",
-                detail=self._join_detail(base_detail, "Browser opened. Finish Gemini login in that browser and the service will continue automatically."),
+                status="failed",
+                code="browser_launch_failed",
+                detail=self._join_detail(base_detail, "Could not start or attach the managed browser session."),
                 browser=browser_name,
                 profile_dir=str(profile_dir),
-                recovery_source="browser_launch",
-                launched=True,
-                action="Open gemini.google.com/app in the launched browser and make sure chat works there.",
-                session=session,
+                action=f"Verify the configured browser path and profile permissions, then retry. Details: {exc}",
             )
 
-        return await self._validate_and_commit(
-            account=account,
+        return AccountRecoveryResult(
+            account_id=account_id,
+            status="awaiting_login",
+            code="interactive_login_required",
+            detail=self._join_detail(base_detail, "Managed browser is ready. Finish Gemini login there and the service will continue automatically."),
             browser=browser_name,
-            profile_dir=profile_dir,
-            bundle=bundle,
-            recovery_source="profile_sync",
-            base_detail=base_detail,
+            profile_dir=str(profile_dir),
+            recovery_source="browser_launch",
+            launched=True,
+            action="Open gemini.google.com/app in the managed browser and make sure chat works there.",
+            session=session,
         )
 
     async def recover_accounts_for_startup(self) -> list[AccountRecoveryResult]:
@@ -183,11 +174,11 @@ class AccountRecoveryService:
                 )
 
         for account in inventory.accounts:
-            if not account.cookie_source_profile_dir:
+            if not account.cookie_source_profile_dir and self.browser_manager is None:
                 continue
             result = await self.recover_account(
                 account.account_id,
-                allow_browser_launch=False,
+                allow_browser_launch=self.settings.browser_manager_enabled,
             )
             results.append(result)
         return results
@@ -204,13 +195,16 @@ class AccountRecoveryService:
         profile_dir: Path,
         session: BrowserLoginSession,
         base_detail: str,
+        recovery_source: str,
     ) -> AccountRecoveryResult:
         try:
-            bundle = extract_cookie_bundle_from_browser_session(
-                session,
-                timeout_seconds=self.settings.cookie_autosync_timeout_seconds,
-            )
+            if self.browser_manager is not None:
+                bundle = await self.browser_manager.collect_cookie_bundle(account)
+            else:
+                raise RuntimeError("persistent browser manager is unavailable")
         except Exception:
+            if self.browser_manager is not None:
+                await self.browser_manager.record_error(account.account_id, "gemini_not_logged_in", state="online")
             return AccountRecoveryResult(
                 account_id=account.account_id,
                 status="awaiting_login",
@@ -218,7 +212,7 @@ class AccountRecoveryService:
                 detail=self._join_detail(base_detail, "Waiting for a valid Gemini session in the launched browser."),
                 browser=browser,
                 profile_dir=str(profile_dir),
-                recovery_source="browser_launch",
+                recovery_source=recovery_source,
                 launched=True,
                 action="Open gemini.google.com/app in the launched browser and make sure chat can answer one message.",
                 session=session,
@@ -229,7 +223,7 @@ class AccountRecoveryService:
             browser=browser,
             profile_dir=profile_dir,
             bundle=bundle,
-            recovery_source="browser_session",
+            recovery_source=recovery_source,
             base_detail=base_detail,
         )
         if result.status == "failed":
@@ -282,6 +276,15 @@ class AccountRecoveryService:
         runtime = await self.pool.refresh_account(account.account_id)
         summary = runtime.summary()
         if not self._summary_is_recovered(summary):
+            if self.browser_manager is not None and bundle.cookies:
+                await self.browser_manager.record_cookie_sync_result(
+                    account.account_id,
+                    bundle=bundle,
+                    provider_status=summary.account_status,
+                    runtime_state=summary.state,
+                    success=False,
+                    error="provider_refresh_failed",
+                )
             return AccountRecoveryResult(
                 account_id=account.account_id,
                 status="failed",
@@ -295,6 +298,15 @@ class AccountRecoveryService:
                 runtime_state=summary.state,
                 account_models=summary.models,
                 action="Retry reauthentication or refresh the account runtime from Admin.",
+            )
+
+        if self.browser_manager is not None:
+            await self.browser_manager.record_cookie_sync_result(
+                account.account_id,
+                bundle=bundle,
+                provider_status=summary.account_status,
+                runtime_state=summary.state,
+                success=True,
             )
 
         return AccountRecoveryResult(

@@ -418,6 +418,16 @@ async def ui_admin_start_reauth(
     return job.model_dump(mode="json")
 
 
+@router.post("/ui/api/admin/accounts/{account_id}/browser/{action}")
+async def ui_admin_browser_action(
+    account_id: str,
+    action: str,
+    _: AuthContext = Depends(require_ui_admin),
+    admin_console: AdminConsoleService = Depends(get_admin_console_service),
+):
+    return await admin_console.browser_action(account_id, action)
+
+
 @router.post("/ui/api/admin/reauth-jobs/{job_id}/complete")
 async def ui_admin_complete_reauth(
     job_id: str,

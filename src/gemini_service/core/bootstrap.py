@@ -303,6 +303,36 @@ def evaluate_bootstrap_status(
         )
     )
 
+    if settings.browser_manager_enabled:
+        browser_state_path = _resolve_repo_path(settings.browser_state_path)
+        browser_profile_root = _resolve_repo_path(settings.browser_profile_root)
+        profile_ok, profile_detail = _check_directory_ready(browser_profile_root, create=True)
+        checks.append(
+            BootstrapCheck(
+                name="browser_profile_root",
+                status="pass" if profile_ok else "fail",
+                detail=(
+                    f"Managed browser profile root is ready at {browser_profile_root}."
+                    if profile_ok
+                    else f"Managed browser profile root is not writable: {profile_detail}"
+                ),
+                action=None if profile_ok else "Ensure GEMINI_SERVICE_BROWSER_PROFILE_ROOT points to a writable directory.",
+            )
+        )
+        state_ok, state_detail = _check_file_parent_ready(browser_state_path)
+        checks.append(
+            BootstrapCheck(
+                name="browser_state_path",
+                status="pass" if state_ok else "fail",
+                detail=(
+                    f"Managed browser registry path is ready: {browser_state_path}"
+                    if state_ok
+                    else f"Managed browser registry path is not writable: {state_detail}"
+                ),
+                action=None if state_ok else "Ensure GEMINI_SERVICE_BROWSER_STATE_PATH is writable by the service user.",
+            )
+        )
+
     try:
         database_url = make_url(settings.database_url)
     except Exception as exc:

@@ -36,6 +36,7 @@ def test_sync_inventory_updates_configured_account(tmp_path: Path, monkeypatch):
         accounts_path=accounts_path,
         timeout_seconds=5,
         start_url="https://gemini.google.com/app",
+        commit_inventory=True,
     )
 
     payload = json.loads(accounts_path.read_text(encoding="utf-8"))

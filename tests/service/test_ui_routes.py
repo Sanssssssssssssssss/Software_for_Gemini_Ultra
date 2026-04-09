@@ -296,8 +296,11 @@ def test_ui_admin_reauth_job_flow(client_factory, monkeypatch, isolated_service_
         def wait(self, timeout=None):
             return 0
 
+    call_count = {"count": 0}
+
     async def _fake_recover_account(self, account_id, *, allow_browser_launch, browser_session=None, browser=None):
-        if browser_session is None:
+        call_count["count"] += 1
+        if call_count["count"] == 1:
             return AccountRecoveryResult(
                 account_id=account_id,
                 status="awaiting_login",
@@ -438,7 +441,8 @@ def test_ui_admin_reauth_job_auto_completes_after_browser_login(client_factory, 
     cookie_attempts = {"count": 0}
 
     async def _fake_recover_account(self, account_id, *, allow_browser_launch, browser_session=None, browser=None):
-        if browser_session is None:
+        cookie_attempts["count"] += 1
+        if cookie_attempts["count"] == 1:
             return AccountRecoveryResult(
                 account_id=account_id,
                 status="awaiting_login",
@@ -458,8 +462,7 @@ def test_ui_admin_reauth_job_auto_completes_after_browser_login(client_factory, 
                     start_url="https://gemini.google.com/app",
                 ),
             )
-        cookie_attempts["count"] += 1
-        if cookie_attempts["count"] == 1:
+        if cookie_attempts["count"] == 2:
             return AccountRecoveryResult(
                 account_id=account_id,
                 status="awaiting_login",
@@ -470,7 +473,7 @@ def test_ui_admin_reauth_job_auto_completes_after_browser_login(client_factory, 
                 launched=True,
                 recovery_source="browser_session",
                 action="Open gemini.google.com/app in the launched browser and make sure chat works there.",
-                session=browser_session,
+                session=None,
             )
         return AccountRecoveryResult(
             account_id=account_id,

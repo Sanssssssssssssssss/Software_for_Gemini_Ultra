@@ -154,4 +154,6 @@ It now validates more than cookies and tokens. Expect checks for:
 - SQLite directory readiness when applicable
 - account inventory path permissions
 - browser autosync executable/profile availability
+- persistent browser manager registry and live-session attach behavior
+- admin reauth keep-open flow and browser action endpoints
 - confirm `/metrics` exposes `gemini_service_asset_cleanup_runs_total`, `gemini_service_asset_expired_total`, and `gemini_service_asset_deleted_total`

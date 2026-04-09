@@ -17,6 +17,7 @@ import {
   getAdminDashboard,
   getMe,
   logout,
+  runAdminBrowserAction,
   runAdminAction,
   startAdminReauth,
   type UiMe,
@@ -272,6 +273,26 @@ export function AdminPage() {
     }
   }
 
+  async function handleBrowserAction(accountId: string, action: string) {
+    const key = `browser:${accountId}:${action}`;
+    setPendingActions((current) => ({ ...current, [key]: true }));
+    setError("");
+    setNotice("");
+    try {
+      const result = await runAdminBrowserAction(accountId, action);
+      setNotice(`${accountId}：${result.detail}`);
+      await refreshDashboard();
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : "浏览器动作失败。");
+    } finally {
+      setPendingActions((current) => {
+        const next = { ...current };
+        delete next[key];
+        return next;
+      });
+    }
+  }
+
   async function saveAccount() {
     setError("");
     setNotice("");
@@ -374,9 +395,24 @@ export function AdminPage() {
                         <span>恢复来源：{account.last_recovery_source || "无"}</span>
                         <span>恢复时间：{formatTimestamp(account.last_recovery_at)}</span>
                       </div>
+                      <div className="runtime-account__meta">
+                        <span>Browser：{account.browser_online ? "ONLINE" : account.browser_state.toUpperCase()}</span>
+                        <span>Port：{account.browser_debug_port ?? "-"}</span>
+                      </div>
+                      <div className="runtime-account__meta">
+                        <span>最近同步：{formatTimestamp(account.last_cookie_sync_at)}</span>
+                        <span>最近验证：{formatTimestamp(account.last_provider_validation_at)}</span>
+                      </div>
                       <div className="account-admin-card__actions">
                         <button className="secondary-link compact-link button-reset" type="button" onClick={() => { setSelectedAccountId(account.account_id); setAccountForm(toFormState(account)); }}>编辑</button>
                         <button className="secondary-link compact-link button-reset" type="button" onClick={() => void startAdminReauth(account.account_id).then(() => refreshDashboard())}>重登</button>
+                        <button className="secondary-link compact-link button-reset" type="button" onClick={() => void handleBrowserAction(account.account_id, "start")}>启动浏览器</button>
+                        <button className="secondary-link compact-link button-reset" type="button" onClick={() => void handleBrowserAction(account.account_id, "focus")}>聚焦浏览器</button>
+                        <button className="secondary-link compact-link button-reset" type="button" onClick={() => void handleBrowserAction(account.account_id, "sync-now")}>立即同步</button>
+                        <button className="secondary-link compact-link button-reset" type="button" onClick={() => void handleBrowserAction(account.account_id, account.browser_auto_refresh_enabled ? "pause-auto-refresh" : "resume-auto-refresh")}>
+                          {account.browser_auto_refresh_enabled ? "暂停刷新" : "恢复刷新"}
+                        </button>
+                        <button className="secondary-link compact-link button-reset tone-danger" type="button" onClick={() => void handleBrowserAction(account.account_id, "stop")}>关闭浏览器</button>
                         <button className="secondary-link compact-link button-reset tone-danger" data-testid={`admin-delete-account-${account.account_id}`} disabled={!!pendingActions[deleteKey]} type="button" onClick={() => void handleDeleteAccount(account.account_id)}>
                           {pendingActions[deleteKey] ? "删除中..." : "删除"}
                         </button>
@@ -434,8 +470,8 @@ export function AdminPage() {
                         <span>Provider：{String(job.result.provider_status || "-")}</span>
                       </div>
                     <div className="account-admin-card__actions">
-                      <button className="primary-button button-reset" disabled={!!pendingActions[completeKey] || job.status === "completed" || job.status === "cancelled"} type="button" onClick={() => void handleCompleteReauth(job)}>{pendingActions[completeKey] ? "同步中..." : "完成同步"}</button>
-                      <button className="secondary-link compact-link button-reset" disabled={!!pendingActions[cancelKey] || !job.launched} type="button" onClick={() => void handleCancelReauth(job)}>{pendingActions[cancelKey] ? "取消中..." : "取消任务"}</button>
+                      <button className="primary-button button-reset" disabled={!!pendingActions[completeKey] || job.status === "completed" || job.status === "cancelled"} type="button" onClick={() => void handleCompleteReauth(job)}>{pendingActions[completeKey] ? "同步中..." : "立即同步"}</button>
+                      <button className="secondary-link compact-link button-reset" disabled={!!pendingActions[cancelKey]} type="button" onClick={() => void handleCancelReauth(job)}>{pendingActions[cancelKey] ? "取消中..." : "取消轮询"}</button>
                     </div>
                   </article>
                 );

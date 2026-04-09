@@ -4,6 +4,7 @@ import asyncio
 import json
 from pathlib import Path
 
+from gemini_service.core.browser_cookie_sync import BrowserLoginSession, CookieBundle
 from gemini_service.core.config import Settings
 from gemini_service.schemas.accounts import AccountConfig
 from gemini_service.schemas.common import AccountSummary
@@ -42,7 +43,53 @@ class _FakePool:
         raise AssertionError("refresh_account should not be called when candidate validation fails")
 
 
-def test_recovery_does_not_overwrite_inventory_when_provider_is_still_unauthenticated(tmp_path, monkeypatch):
+class _FakeBrowserManager:
+    def __init__(self, bundle: CookieBundle | None = None) -> None:
+        self.bundle = bundle
+        self.recorded_errors: list[str] = []
+        self.recorded_results: list[tuple[str, bool]] = []
+        self.session = BrowserLoginSession(
+            browser="chrome",
+            browser_path=Path("/fake/browser"),
+            profile_dir=Path("/fake/profile"),
+            port=9222,
+            process=None,
+            start_url="https://gemini.google.com/app",
+            pid=1234,
+            launched_by_service=True,
+        )
+
+    def resolve_profile_dir(self, account: AccountConfig) -> Path:
+        return Path(account.cookie_source_profile_dir or "/fake/profile")
+
+    async def attach_existing_session(self, account: AccountConfig):
+        return self.session
+
+    async def ensure_session(self, account: AccountConfig):
+        return self.session
+
+    async def collect_cookie_bundle(self, account: AccountConfig) -> CookieBundle:
+        if self.bundle is None:
+            raise RuntimeError("no cookies yet")
+        return self.bundle
+
+    async def record_error(self, account_id: str, error: str, *, state: str = "error") -> None:
+        self.recorded_errors.append(error)
+
+    async def record_cookie_sync_result(
+        self,
+        account_id: str,
+        *,
+        bundle: CookieBundle,
+        provider_status: str | None,
+        runtime_state: str | None,
+        success: bool,
+        error: str | None = None,
+    ) -> None:
+        self.recorded_results.append((account_id, success))
+
+
+def test_recovery_does_not_overwrite_inventory_when_provider_is_still_unauthenticated(tmp_path):
     accounts_path = tmp_path / "accounts.json"
     accounts_path.write_text(
         json.dumps(
@@ -63,36 +110,40 @@ def test_recovery_does_not_overwrite_inventory_when_provider_is_still_unauthenti
     profile_dir = tmp_path / "profiles" / "acc-1"
     profile_dir.mkdir(parents=True)
 
-    monkeypatch.setattr(
-        "gemini_service.services.account_recovery_service.extract_cookie_bundle_from_profile",
-        lambda **kwargs: type(
-            "Bundle",
-            (),
-            {
-                "secure_1psid": "new-cookie",
-                "secure_1psidts": "new-sidts",
-                "cookies": [],
-            },
-        )(),
-    )
-    monkeypatch.setattr(
-        "gemini_service.services.account_recovery_service.resolve_browser_path",
-        lambda browser, explicit_path=None: Path("/fake/browser"),
-    )
-
     settings = Settings(
         accounts_config_path=str(accounts_path),
         cookie_autosync_enabled=True,
     )
     pool = _FakePool()
-    service = AccountRecoveryService(settings=settings, pool=pool)
+    manager = _FakeBrowserManager(
+        CookieBundle(
+            secure_1psid="new-cookie",
+            secure_1psidts="sidts-new-cookie",
+            cookies=[
+                {
+                    "name": "__Secure-1PSID",
+                    "value": "new-cookie",
+                    "domain": ".google.com",
+                    "path": "/",
+                },
+                {
+                    "name": "__Secure-1PSIDTS",
+                    "value": "sidts-new-cookie",
+                    "domain": ".google.com",
+                    "path": "/",
+                },
+            ],
+        )
+    )
+    service = AccountRecoveryService(settings=settings, pool=pool, browser_manager=manager)
 
     result = asyncio.run(service.recover_account("acc-1", allow_browser_launch=False))
 
     payload = json.loads(accounts_path.read_text(encoding="utf-8"))
-    assert result.status == "failed"
+    assert result.status == "awaiting_login"
     assert result.code == "cookie_collected_but_provider_unauthenticated"
     assert payload["accounts"][0]["secure_1psid"] == "old-cookie"
     assert payload["accounts"][0]["secure_1psidts"] == "old-sidts"
     assert pool.sync_calls == 0
     assert pool.refresh_calls == 0
+    assert manager.recorded_results == []

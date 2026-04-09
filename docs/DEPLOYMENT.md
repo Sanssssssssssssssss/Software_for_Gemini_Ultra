@@ -26,6 +26,10 @@ The recommended first production baseline is Docker Compose with:
    - `GEMINI_SERVICE_ASSET_ORPHAN_GRACE_HOURS`
    - `GEMINI_SERVICE_ASSET_TTL_HOURS`
 5. Confirm the host can reach `gemini.google.com`.
+6. If you are using browser-managed recovery, persist both:
+   - `data/browser-profiles/`
+   - `data/browser-sessions.json`
+   and ensure only one service instance manages a given profile.
 
 ## Local process launch
 
@@ -77,3 +81,4 @@ This exercises the real FastAPI app, scheduler, batch worker, auth boundaries, a
 - This repository's Docker artifacts were authored for production deployment, but they were not runtime-verified in the current environment because Docker was not installed on the build host.
 - Prefer `python ...` commands in operator docs; do not assume a Windows-only `py` launcher exists.
 - Cookie autosync now probes common Chrome and Edge locations on Windows, macOS, and Linux. If autosync is unavailable on a host, use `python scripts/run_local.py --skip-cookie-sync`.
+- For browser-managed recovery, provision a dedicated writable profile root such as `data/browser-profiles/` and keep `GEMINI_SERVICE_BROWSER_MANAGER_ENABLED=true`. The service stores browser session metadata in `data/browser-sessions.json` and can reattach to or relaunch the same account profile after restart.

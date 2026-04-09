@@ -53,6 +53,7 @@ The internal service lives in `src/gemini_service`. The current implementation a
 - React + TypeScript + Vite frontend for Login, Setup, Chat, and Admin, served by FastAPI after build
 - Playwright E2E coverage for login, chat streaming, admin actions, and user/admin access boundaries
 - admin control console for account inventory, browser-based reauthentication jobs with automatic cookie polling, and session export
+- persistent service-managed browser sessions per account with automatic cookie refresh and keep-open reauthentication
 
 Recommended first-run flow:
 
@@ -106,13 +107,15 @@ API authentication uses `GEMINI_SERVICE_API_TOKENS`. Plain tokens remain backwar
 The current chat UI defaults standard users to automatic routing. Manual account pinning is only exposed to administrators for debugging and recovery work.
 The admin console now also supports:
 - adding or updating account inventory entries
-- launching a local browser reauthentication job for `reauth_required` accounts
-- auto-syncing browser cookies back into `config/accounts.json` once Gemini login becomes valid again
+- launching a dedicated service-managed browser session for a specific account
+- browser-based reauthentication jobs that keep polling until Gemini itself reports `AVAILABLE`
+- keeping that browser window open after recovery so the service can continue refreshing cookies in the background
+- focusing, force-syncing, pausing auto-refresh, resuming auto-refresh, or stopping the managed browser session per account
 - exporting individual sessions or bulk session sets as JSON or Markdown
 For offline validation without real Gemini cookies, use [config/accounts.mock.json](config/accounts.mock.json) together with `python scripts/validate_service.py`.
-For interactive cookie bootstrap without closing your main browser session, use `python scripts/playwright_bootstrap.py` to open a dedicated persistent browser profile and export fresh Gemini cookies into `config/accounts.json`.
-If you bind an account to a persistent browser profile with `cookie_source_browser` and `cookie_source_profile_dir`, local startup can now attempt account recovery before the service boots. Enable it with `GEMINI_SERVICE_COOKIE_AUTOSYNC_ENABLED=true`, then keep using `python scripts/run_local.py --env-file .env`.
-Startup recovery is now conservative: it only writes fresh cookies back to `accounts.json` after Gemini provider validation succeeds. Invalid or stale browser cookies no longer overwrite a previously good inventory entry.
+For interactive bootstrap or repair, use `python scripts/playwright_bootstrap.py --account-id <account_id>`. The managed browser now stays open by default; the script exits only after provider validation succeeds or times out.
+If you bind an account to a persistent browser profile with `cookie_source_browser` and `cookie_source_profile_dir`, local startup can now try account recovery before the service boots and keep the browser session alive for later refreshes. Enable it with `GEMINI_SERVICE_COOKIE_AUTOSYNC_ENABLED=true` and `GEMINI_SERVICE_BROWSER_MANAGER_ENABLED=true`, then keep using `python scripts/run_local.py --env-file .env`.
+Startup and admin recovery are now conservative: fresh cookies are committed to `accounts.json` only after Gemini provider validation succeeds. Invalid or stale browser cookies no longer overwrite a previously good inventory entry.
 The React frontend is built from [`frontend/`](frontend/) and now owns Login, Setup, Chat, and Admin. Build it with `cd frontend && npm install && npm run build` before launching the FastAPI app so `/ui/login`, `/setup`, `/ui/chat`, and `/admin` all resolve to the new SPA.
 For local HTTP startup, non-production environments such as `development`, `local`, `local-mock`, and `test` intentionally issue a non-`Secure` UI session cookie so browser logins work without HTTPS termination.
 Run `cd frontend && npm run test:e2e` to execute the Playwright browser suite against the mock environment defined in [`config/e2e.mock.env`](config/e2e.mock.env).

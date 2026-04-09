@@ -163,6 +163,14 @@ export type AdminManagedAccount = {
   has_cookie_bundle: boolean;
   last_recovery_at: string | null;
   last_recovery_source: string | null;
+  browser_online: boolean;
+  browser_state: string;
+  browser_debug_port: number | null;
+  browser_auto_refresh_enabled: boolean;
+  last_cookie_sync_at: string | null;
+  last_provider_validation_at: string | null;
+  last_good_cookie_at: string | null;
+  browser_last_error: string | null;
   runtime: AccountSummary | null;
 };
 
@@ -189,7 +197,17 @@ export type AdminReauthJob = {
   updated_at: string;
   action_required: string | null;
   launch_url: string | null;
+  recovery_source: string | null;
   result: Record<string, unknown>;
+};
+
+export type AdminBrowserActionResponse = {
+  account_id: string;
+  action: string;
+  detail: string;
+  browser_state: string;
+  debug_port: number | null;
+  auto_refresh_enabled: boolean;
 };
 
 export type AdminDashboard = {
@@ -420,6 +438,15 @@ export async function deleteAdminAccount(accountId: string): Promise<{ ok: true;
 
 export async function startAdminReauth(accountId: string): Promise<AdminReauthJob> {
   return requestJson<AdminReauthJob>(`/ui/api/admin/accounts/${accountId}/reauth`, {
+    method: "POST",
+  });
+}
+
+export async function runAdminBrowserAction(
+  accountId: string,
+  action: string,
+): Promise<AdminBrowserActionResponse> {
+  return requestJson<AdminBrowserActionResponse>(`/ui/api/admin/accounts/${accountId}/browser/${action}`, {
     method: "POST",
   });
 }
