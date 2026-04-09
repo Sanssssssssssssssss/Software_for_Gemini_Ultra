@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+from dataclasses import asdict
 import json
 import sys
 import time
@@ -81,14 +82,14 @@ async def _main() -> int:
 
         if args.sync_now:
             result = await recovery.recover_account(args.account_id, allow_browser_launch=False)
-            print(json.dumps(result.__dict__, ensure_ascii=False, default=str))
+            print(json.dumps(asdict(result), ensure_ascii=False, default=str))
             return 0 if result.status == "completed" else 1
 
         deadline = time.time() + args.wait_timeout_seconds
         print("Managed browser session is ready. Finish Gemini login in that window; the script will validate automatically.")
         while time.time() < deadline:
             result = await recovery.recover_account(args.account_id, allow_browser_launch=False)
-            print(json.dumps(result.__dict__, ensure_ascii=False, default=str))
+            print(json.dumps(asdict(result), ensure_ascii=False, default=str))
             if result.status == "completed":
                 if args.stop_after_sync:
                     await browser_manager.stop_session(args.account_id)

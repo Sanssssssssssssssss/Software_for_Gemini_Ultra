@@ -13,6 +13,7 @@ from hashlib import sha256
 from pathlib import Path
 from typing import Any
 from urllib.error import URLError
+from urllib.parse import quote
 from urllib.request import urlopen
 
 from gemini_webapi.utils.rotate_1psidts import _get_cookie_cache_dir
@@ -508,38 +509,20 @@ def focus_browser_login_session(
     timeout_seconds: int = 10,
 ) -> None:
     _wait_for_cdp(session.port, timeout_seconds=min(timeout_seconds, 20))
-    try:
-        from playwright.sync_api import sync_playwright
-    except ImportError as exc:
-        raise RuntimeError(
-            "Playwright is required for browser focus operations. Install it in the active environment first."
-        ) from exc
-
     target_url = start_url or session.start_url
-    with sync_playwright() as playwright:
-        browser = playwright.chromium.connect_over_cdp(f"http://127.0.0.1:{session.port}")
-        try:
-            page_to_focus = None
-            for context in browser.contexts:
-                for page in context.pages:
-                    url = page.url or ""
-                    if "gemini.google.com" in url:
-                        page_to_focus = page
-                        break
-                if page_to_focus is not None:
-                    break
-            if page_to_focus is None:
-                if not browser.contexts:
-                    context = browser.new_context()
-                else:
-                    context = browser.contexts[0]
-                page_to_focus = context.new_page()
-                page_to_focus.goto(target_url, wait_until="domcontentloaded", timeout=timeout_seconds * 1000)
-            page_to_focus.bring_to_front()
-            if target_url and "gemini.google.com" not in (page_to_focus.url or ""):
-                page_to_focus.goto(target_url, wait_until="domcontentloaded", timeout=timeout_seconds * 1000)
-        finally:
-            browser.close()
+    try:
+        with urlopen(f"http://127.0.0.1:{session.port}/json/new?{quote(target_url, safe=':/?&=%')}", timeout=5):
+            return
+    except Exception:
+        pass
+
+    args = [
+        str(session.browser_path),
+        f"--user-data-dir={session.profile_dir}",
+        "--new-window",
+        target_url,
+    ]
+    subprocess.Popen(args)
 
 
 def collect_cookies_from_browser_session(
