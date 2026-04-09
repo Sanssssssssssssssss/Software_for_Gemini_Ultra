@@ -9,7 +9,7 @@
 - `/ui/api/admin/dashboard`: admin control console data for account inventory, reauth jobs, sessions, and assets
 - `/ui/api/admin/accounts`: add or update managed account inventory entries
 - `/ui/api/admin/accounts/{account_id}/reauth`: launch a local browser reauthentication job
-- `/ui/api/admin/reauth-jobs/{job_id}/complete`: sync cookies back from the browser job
+- `/ui/api/admin/reauth-jobs/{job_id}/complete`: force an immediate sync attempt for a running browser job
 - `/ui/api/admin/sessions/{session_id}/export`: export a single session as JSON or Markdown
 - `POST /v1/admin/accounts/{account_id}/actions/{action}`: admin-only runtime actions
 - `POST /v1/batches`: persisted background batch execution
@@ -62,8 +62,11 @@ Actions:
 4. Confirm `/v1/accounts` and `/admin` show the account as `ready` or `degraded`, then run a smoke test.
 5. If you are operating locally, prefer the Admin console's "一键重登" flow:
    - click "一键重登" on the affected account
-   - finish the Google / Gemini login in the browser that opens on the service machine
-   - return to the job list and click "完成同步"
+   - the service first tries to reuse the configured browser profile without opening a new browser
+   - if that is not enough, it opens a dedicated browser window on the service machine
+   - finish the Google / Gemini login in that browser and keep it open for a few seconds
+   - the reauth job now auto-polls and auto-completes as soon as Gemini cookies become valid again
+   - only use "立即同步" as a manual fallback if the browser is already logged in but the job has not flipped to completed yet
    - confirm the account runtime returns to `ready`
 
 ## Incident: startup warns about browser autosync

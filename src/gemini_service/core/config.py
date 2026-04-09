@@ -39,6 +39,8 @@ class Settings(BaseSettings):
     cookie_autosync_headless: bool = True
     cookie_autosync_timeout_seconds: int = 20
     cookie_autosync_start_url: str = "https://gemini.google.com/app"
+    admin_reauth_poll_interval_seconds: float = 2.0
+    admin_reauth_timeout_seconds: int = 600
     ui_username: str = "admin"
     ui_password: str = "change-me-ui-password"
     ui_user_username: str = ""

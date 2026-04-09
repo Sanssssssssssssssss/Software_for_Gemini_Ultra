@@ -1,8 +1,10 @@
 from __future__ import annotations
 
+import time
 from pathlib import Path
 import sys
 
+from gemini_service.core.browser_cookie_sync import CookieSyncResult
 from gemini_service.core.browser_cookie_sync import BrowserLoginSession
 
 
@@ -239,6 +241,48 @@ def test_ui_admin_dashboard_upsert_account_and_export(client_factory, isolated_s
         assert '"session_id"' in exported.text
 
 
+def test_ui_admin_account_can_be_deleted(client_factory, isolated_service_env):
+    accounts_path = _copy_mock_accounts(isolated_service_env)
+    with client_factory(
+        GEMINI_SERVICE_REQUIRE_AUTH="false",
+        GEMINI_SERVICE_ACCOUNTS_CONFIG_PATH=str(accounts_path),
+        GEMINI_SERVICE_UI_USERNAME="admin",
+        GEMINI_SERVICE_UI_PASSWORD="secret-pass",
+    ) as client:
+        login = client.post(
+            "/ui/api/login",
+            json={"username": "admin", "password": "secret-pass"},
+        )
+        assert login.status_code == 200
+
+        created = client.post(
+            "/ui/api/admin/accounts",
+            json={
+                "account_id": "ops-delete-1",
+                "enabled": True,
+                "provider_backend": "mock",
+                "cookie_source_browser": "chrome",
+                "cookie_source_browser_path": str(Path(sys.executable)),
+                "cookie_source_profile_dir": "data/chrome-ops-delete-1",
+                "max_concurrency": 1,
+                "cooldown_seconds": 60,
+                "request_timeout_seconds": 120,
+                "verify_ssl": True,
+                "tags": ["ops"],
+            },
+        )
+        assert created.status_code == 200
+
+        deleted = client.delete("/ui/api/admin/accounts/ops-delete-1")
+        assert deleted.status_code == 200
+        assert deleted.json()["ok"] is True
+
+        dashboard = client.get("/ui/api/admin/dashboard")
+        assert dashboard.status_code == 200
+        account_ids = [item["account_id"] for item in dashboard.json()["inventory_accounts"]]
+        assert "ops-delete-1" not in account_ids
+
+
 def test_ui_admin_reauth_job_flow(client_factory, monkeypatch, isolated_service_env):
     accounts_path = _copy_mock_accounts(isolated_service_env)
 
@@ -262,6 +306,15 @@ def test_ui_admin_reauth_job_flow(client_factory, monkeypatch, isolated_service_
             start_url=kwargs["start_url"],
         )
 
+    monkeypatch.setattr(
+        "gemini_service.services.admin_console_service.sync_single_account_from_inventory",
+        lambda **kwargs: CookieSyncResult(
+            account_id="ops-account-reauth",
+            status="error",
+            detail="interactive login required",
+            code="cookie_sync_failed",
+        ),
+    )
     monkeypatch.setattr(
         "gemini_service.services.admin_console_service.launch_browser_login_session",
         _fake_launch_browser_login_session,
@@ -308,10 +361,140 @@ def test_ui_admin_reauth_job_flow(client_factory, monkeypatch, isolated_service_
         started = client.post("/ui/api/admin/accounts/ops-account-reauth/reauth")
         assert started.status_code == 200
         assert started.json()["status"] == "awaiting_login"
+        assert started.json()["monitoring"] is True
 
         completed = client.post(f"/ui/api/admin/reauth-jobs/{started.json()['job_id']}/complete")
         assert completed.status_code == 200
         assert completed.json()["status"] == "completed"
+        assert completed.json()["is_terminal"] is True
+
+
+def test_ui_admin_reauth_job_can_complete_from_existing_profile(client_factory, monkeypatch, isolated_service_env):
+    accounts_path = _copy_mock_accounts(isolated_service_env)
+
+    monkeypatch.setattr(
+        "gemini_service.services.admin_console_service.sync_single_account_from_inventory",
+        lambda **kwargs: CookieSyncResult(
+            account_id="mock-ready-1",
+            status="ok",
+            detail="Browser profile cookies synced successfully and refreshed 12 cached google.com cookies.",
+            updated=True,
+            profile_dir="data/chrome-acc-1",
+            browser="chrome",
+            code="cookie_sync_ok",
+        ),
+    )
+
+    with client_factory(
+        GEMINI_SERVICE_REQUIRE_AUTH="false",
+        GEMINI_SERVICE_ACCOUNTS_CONFIG_PATH=str(accounts_path),
+        GEMINI_SERVICE_UI_USERNAME="admin",
+        GEMINI_SERVICE_UI_PASSWORD="secret-pass",
+    ) as client:
+        login = client.post(
+            "/ui/api/login",
+            json={"username": "admin", "password": "secret-pass"},
+        )
+        assert login.status_code == 200
+
+        started = client.post("/ui/api/admin/accounts/mock-ready-1/reauth")
+        assert started.status_code == 200
+        assert started.json()["status"] == "completed"
+        assert started.json()["launched"] is False
+        assert started.json()["monitoring"] is False
+
+
+def test_ui_admin_reauth_job_auto_completes_after_browser_login(client_factory, monkeypatch, isolated_service_env):
+    accounts_path = _copy_mock_accounts(isolated_service_env)
+
+    class _DummyProcess:
+        def poll(self):
+            return None
+
+        def terminate(self):
+            return None
+
+        def wait(self, timeout=None):
+            return 0
+
+    cookie_attempts = {"count": 0}
+
+    monkeypatch.setattr(
+        "gemini_service.services.admin_console_service.sync_single_account_from_inventory",
+        lambda **kwargs: CookieSyncResult(
+            account_id="mock-ready-1",
+            status="error",
+            detail="interactive login required",
+            code="cookie_sync_failed",
+        ),
+    )
+    monkeypatch.setattr(
+        "gemini_service.services.admin_console_service.launch_browser_login_session",
+        lambda **kwargs: BrowserLoginSession(
+            browser=kwargs["browser"],
+            browser_path=Path(kwargs["browser_path"]),
+            profile_dir=Path(kwargs["profile_dir"]),
+            port=9222,
+            process=_DummyProcess(),
+            start_url=kwargs["start_url"],
+        ),
+    )
+
+    def _collect(session, timeout_seconds):
+        cookie_attempts["count"] += 1
+        if cookie_attempts["count"] == 1:
+            raise RuntimeError("cookies not ready")
+        return ("cookie-value", "sidts-cookie-value", 8)
+
+    monkeypatch.setattr(
+        "gemini_service.services.admin_console_service.collect_cookies_from_browser_session",
+        _collect,
+    )
+    monkeypatch.setattr(
+        "gemini_service.core.browser_cookie_sync.terminate_browser_login_session",
+        lambda session: None,
+    )
+
+    with client_factory(
+        GEMINI_SERVICE_REQUIRE_AUTH="false",
+        GEMINI_SERVICE_ACCOUNTS_CONFIG_PATH=str(accounts_path),
+        GEMINI_SERVICE_UI_USERNAME="admin",
+        GEMINI_SERVICE_UI_PASSWORD="secret-pass",
+        GEMINI_SERVICE_ADMIN_REAUTH_POLL_INTERVAL_SECONDS="0.05",
+        GEMINI_SERVICE_ADMIN_REAUTH_TIMEOUT_SECONDS="5",
+    ) as client:
+        login = client.post(
+            "/ui/api/login",
+            json={"username": "admin", "password": "secret-pass"},
+        )
+        assert login.status_code == 200
+
+        save = client.post(
+            "/ui/api/admin/accounts",
+            json={
+                "account_id": "ops-account-auto-reauth",
+                "enabled": True,
+                "provider_backend": "mock",
+                "cookie_source_browser": "chrome",
+                "cookie_source_browser_path": str(Path(sys.executable)),
+                "cookie_source_profile_dir": "data/chrome-ops-auto-reauth",
+                "max_concurrency": 1,
+                "cooldown_seconds": 60,
+                "request_timeout_seconds": 120,
+                "verify_ssl": True,
+                "tags": ["ops"],
+            },
+        )
+        assert save.status_code == 200
+
+        started = client.post("/ui/api/admin/accounts/ops-account-auto-reauth/reauth")
+        assert started.status_code == 200
+        assert started.json()["status"] == "awaiting_login"
+
+        time.sleep(0.25)
+        jobs = client.get("/ui/api/admin/reauth-jobs")
+        assert jobs.status_code == 200
+        assert jobs.json()["items"][0]["status"] == "completed"
 
 
 def test_standard_ui_user_cannot_access_admin_dashboard(client_factory):

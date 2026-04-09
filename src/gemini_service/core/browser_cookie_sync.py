@@ -69,6 +69,10 @@ class BrowserLoginSession:
     start_url: str
 
 
+def _is_process_running(process: subprocess.Popen[Any]) -> bool:
+    return process.poll() is None
+
+
 def load_inventory(path: Path) -> dict[str, Any]:
     return json.loads(path.read_text(encoding="utf-8"))
 
@@ -320,7 +324,20 @@ def launch_browser_login_session(
         start_url,
     ]
     process = subprocess.Popen(args)
-    _wait_for_cdp(port, timeout_seconds=20)
+    try:
+        _wait_for_cdp(port, timeout_seconds=20)
+    except Exception as exc:
+        if _is_process_running(process):
+            process.terminate()
+            try:
+                process.wait(timeout=10)
+            except subprocess.TimeoutExpired:
+                process.kill()
+                process.wait(timeout=10)
+        raise RuntimeError(
+            "The browser was launched but the debugging endpoint did not become ready. "
+            "Close any stale browser windows using the same profile and try again."
+        ) from exc
     return BrowserLoginSession(
         browser=browser,
         browser_path=browser_path,
@@ -360,6 +377,34 @@ def collect_cookies_from_browser_session(
         )
     cached_count = _write_cookie_cache(secure_1psid, cookies)
     return secure_1psid, secure_1psidts, cached_count
+
+
+def sync_single_account_from_inventory(
+    *,
+    accounts_path: Path,
+    account_id: str,
+    timeout_seconds: int,
+    start_url: str,
+    default_browser: str = "chrome",
+    headless: bool = True,
+) -> CookieSyncResult:
+    results = sync_inventory_from_browser_profiles(
+        accounts_path=accounts_path,
+        timeout_seconds=timeout_seconds,
+        start_url=start_url,
+        default_browser=default_browser,
+        headless=headless,
+        only_account_id=account_id,
+    )
+    if not results:
+        return CookieSyncResult(
+            account_id=account_id,
+            status="error",
+            code="account_not_found",
+            detail=f"Account {account_id} was not found in the inventory.",
+            action="Check the account ID and retry the reauthentication flow.",
+        )
+    return results[0]
 
 
 def sync_inventory_from_browser_profiles(

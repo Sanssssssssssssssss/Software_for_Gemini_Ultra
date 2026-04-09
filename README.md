@@ -52,7 +52,7 @@ The internal service lives in `src/gemini_service`. The current implementation a
 - mock provider validation mode for offline end-to-end verification
 - React + TypeScript + Vite frontend for Login, Setup, Chat, and Admin, served by FastAPI after build
 - Playwright E2E coverage for login, chat streaming, admin actions, and user/admin access boundaries
-- admin control console for account inventory, browser-based reauthentication jobs, and session export
+- admin control console for account inventory, browser-based reauthentication jobs with automatic cookie polling, and session export
 
 Recommended first-run flow:
 
@@ -107,7 +107,7 @@ The current chat UI defaults standard users to automatic routing. Manual account
 The admin console now also supports:
 - adding or updating account inventory entries
 - launching a local browser reauthentication job for `reauth_required` accounts
-- completing cookie sync from that browser back into `config/accounts.json`
+- auto-syncing browser cookies back into `config/accounts.json` once Gemini login becomes valid again
 - exporting individual sessions or bulk session sets as JSON or Markdown
 For offline validation without real Gemini cookies, use [config/accounts.mock.json](config/accounts.mock.json) together with `python scripts/validate_service.py`.
 For interactive cookie bootstrap without closing your main browser session, use `python scripts/playwright_bootstrap.py` to open a dedicated persistent browser profile and export fresh Gemini cookies into `config/accounts.json`.

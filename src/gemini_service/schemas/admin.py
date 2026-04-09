@@ -44,11 +44,14 @@ class AdminAccountUpsertRequest(BaseModel):
 class AdminReauthJobResponse(BaseModel):
     job_id: str
     account_id: str
-    status: Literal["awaiting_login", "syncing", "completed", "failed", "cancelled"]
+    status: Literal["checking_profile", "awaiting_login", "syncing", "completed", "failed", "cancelled"]
     detail: str
     browser: str | None = None
     profile_dir: str | None = None
     launched: bool = False
+    monitoring: bool = False
+    can_complete: bool = False
+    is_terminal: bool = False
     created_at: str
     updated_at: str
     action_required: str | None = None
