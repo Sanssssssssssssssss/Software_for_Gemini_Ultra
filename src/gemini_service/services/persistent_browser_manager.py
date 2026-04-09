@@ -5,6 +5,7 @@ import json
 from dataclasses import dataclass, asdict
 from datetime import datetime, timezone
 from pathlib import Path
+from functools import partial
 
 from ..core.browser_cookie_sync import (
     BrowserLoginSession,
@@ -182,9 +183,12 @@ class PersistentBrowserManager:
 
     async def collect_cookie_bundle(self, account: AccountConfig) -> CookieBundle:
         session = await self.ensure_session(account)
-        bundle = extract_cookie_bundle_from_browser_session(
-            session,
-            timeout_seconds=self.settings.cookie_autosync_timeout_seconds,
+        bundle = await asyncio.to_thread(
+            partial(
+                extract_cookie_bundle_from_browser_session,
+                session,
+                timeout_seconds=self.settings.cookie_autosync_timeout_seconds,
+            ),
         )
         await self._update_entry(
             account.account_id,
