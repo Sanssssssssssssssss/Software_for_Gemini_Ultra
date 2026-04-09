@@ -94,3 +94,31 @@ def test_bootstrap_reports_missing_frontend_dist_and_unusable_cookie_profile(tmp
     assert checks["asset_root"].status == "pass"
     assert checks["database_path"].status == "pass"
     assert checks["cookie_autosync_profile:acc-1"].status == "warn"
+
+
+def test_bootstrap_warns_when_inventory_contains_blank_or_duplicate_accounts(tmp_path, monkeypatch):
+    accounts = tmp_path / "accounts.json"
+    accounts.write_text(
+        json.dumps(
+            {
+                "accounts": [
+                    {"account_id": "acc-1", "secure_1psid": "cookie-1", "secure_1psidts": "sidts-cookie-1"},
+                    {"account_id": "", "secure_1psid": "cookie-2", "secure_1psidts": "sidts-cookie-2"},
+                    {"account_id": "acc-1", "secure_1psid": "cookie-3", "secure_1psidts": "sidts-cookie-3"},
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+    settings = Settings(
+        require_auth=False,
+        accounts_config_path=str(accounts),
+        database_url=f"sqlite+aiosqlite:///{(tmp_path / 'service.db').as_posix()}",
+        asset_root_path=str(tmp_path / "assets"),
+    )
+
+    monkeypatch.chdir(tmp_path)
+    status = evaluate_bootstrap_status(settings)
+    checks = {check.name: check for check in status.checks}
+
+    assert checks["accounts_inventory_integrity"].status == "warn"

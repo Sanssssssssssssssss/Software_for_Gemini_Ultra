@@ -7,7 +7,7 @@ from typing import TYPE_CHECKING
 from sqlalchemy.engine import make_url
 
 from .browser_cookie_sync import normalize_profile_dir, resolve_browser_path, validate_profile_dir
-from ..schemas.accounts import AccountInventory
+from ..schemas.accounts import load_account_inventory
 from ..schemas.common import BootstrapCheck, BootstrapStatusResponse
 
 if TYPE_CHECKING:
@@ -174,7 +174,7 @@ def evaluate_bootstrap_status(
             )
         )
         try:
-            inventory = AccountInventory.model_validate(json.loads(accounts_path.read_text(encoding="utf-8")))
+            inventory, inventory_issues, _ = load_account_inventory(accounts_path.resolve(), save_clean=True)
         except Exception as exc:
             checks.append(
                 BootstrapCheck(
@@ -185,6 +185,15 @@ def evaluate_bootstrap_status(
                 )
             )
         else:
+            if inventory_issues:
+                checks.append(
+                    BootstrapCheck(
+                        name="accounts_inventory_integrity",
+                        status="warn",
+                        detail="Account inventory contained invalid or duplicate entries that were ignored automatically.",
+                        action="Review config/accounts.json and remove blank or duplicate account entries.",
+                    )
+                )
             if not inventory.accounts:
                 checks.append(
                     BootstrapCheck(

@@ -22,6 +22,7 @@ from .core.telemetry import TelemetryService
 from .db.repository import ChatRepository
 from .schemas.common import ApiError, ErrorResponse
 from .services.account_pool import AccountPool
+from .services.account_recovery_service import AccountRecoveryService
 from .services.asset_cleanup_service import AssetCleanupService
 from .services.asset_service import AssetService
 from .services.admin_console_service import AdminConsoleService
@@ -64,12 +65,18 @@ async def lifespan(app: FastAPI):
     await batch_service.start()
     app.state.chat_service = chat_service
     app.state.batch_service = batch_service
+    account_recovery_service = AccountRecoveryService(
+        settings=settings,
+        pool=pool,
+    )
+    app.state.account_recovery_service = account_recovery_service
     admin_console_service = AdminConsoleService(
         settings=settings,
         repository=repository,
         pool=pool,
         chat_service=chat_service,
         asset_service=asset_service,
+        recovery_service=account_recovery_service,
         telemetry=app.state.telemetry,
     )
     app.state.admin_console_service = admin_console_service

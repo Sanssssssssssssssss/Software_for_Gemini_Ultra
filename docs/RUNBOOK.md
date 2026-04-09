@@ -62,10 +62,10 @@ Actions:
 4. Confirm `/v1/accounts` and `/admin` show the account as `ready` or `degraded`, then run a smoke test.
 5. If you are operating locally, prefer the Admin console's "一键重登" flow:
    - click "一键重登" on the affected account
-   - the service first tries to reuse the configured browser profile without opening a new browser
-   - if that is not enough, it opens a dedicated browser window on the service machine
+   - the service first validates whether the configured profile can already recover Gemini without opening a new browser
+   - if that is not enough, it opens a dedicated browser window for that specific account/profile on the service machine
    - finish the Google / Gemini login in that browser and keep it open for a few seconds
-   - the reauth job now auto-polls and auto-completes as soon as Gemini cookies become valid again
+   - the reauth job now auto-polls and only flips to `completed` after the provider itself returns `AVAILABLE`
    - only use "立即同步" as a manual fallback if the browser is already logged in but the job has not flipped to completed yet
    - confirm the account runtime returns to `ready`
 
@@ -82,7 +82,7 @@ Actions:
 1. Run `python scripts/doctor.py --env-file .env` and inspect the `cookie_autosync_*` checks.
 2. If the browser is installed in a non-standard path, set `cookie_source_browser_path` for the affected account.
 3. If the profile directory is wrong or missing, re-run `python scripts/playwright_bootstrap.py` or update `cookie_source_profile_dir`.
-4. Cookie autosync now also refreshes the upstream `gemini_webapi` cookie cache. If the service was already running with stale in-memory cookies, use the admin `refresh` action or restart the service after autosync completes.
+4. Cookie autosync now also refreshes the upstream `gemini_webapi` cookie cache, but inventory writes are only committed after provider validation succeeds. If the service was already running with stale in-memory cookies, use the admin `refresh` action or restart the service after autosync completes.
 5. If you need the service up immediately, start with `python scripts/run_local.py --env-file .env --skip-cookie-sync`.
 
 ## Incident: one session reports `session_busy`

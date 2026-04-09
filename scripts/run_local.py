@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+import asyncio
 import os
 import sys
 from pathlib import Path
@@ -50,30 +51,33 @@ def main() -> None:
     os.environ["PYTHONPATH"] = (
         f"{SRC_DIR}{os.pathsep}{os.environ['PYTHONPATH']}" if os.environ.get("PYTHONPATH") else str(SRC_DIR)
     )
-    from gemini_service.core.browser_cookie_sync import sync_inventory_from_browser_profiles
     from gemini_service.core.bootstrap import evaluate_bootstrap_status
     from gemini_service.core.config import get_settings
+    from gemini_service.services.account_pool import AccountPool
+    from gemini_service.services.account_recovery_service import AccountRecoveryService
 
     get_settings.cache_clear()
     settings = get_settings()
 
     if not args.skip_cookie_sync and settings.cookie_autosync_enabled:
-        accounts_path = Path(settings.accounts_config_path)
-        if not accounts_path.is_absolute():
-            accounts_path = (REPO_ROOT / accounts_path).resolve()
         print("Checking persistent browser profiles for fresh Gemini cookies...")
-        results = sync_inventory_from_browser_profiles(
-            accounts_path=accounts_path,
-            timeout_seconds=settings.cookie_autosync_timeout_seconds,
-            start_url=settings.cookie_autosync_start_url,
-            default_browser=settings.cookie_autosync_browser,
-            headless=settings.cookie_autosync_headless,
-        )
+        async def _recover_accounts():
+            pool = AccountPool(settings)
+            await pool.start()
+            try:
+                recovery = AccountRecoveryService(settings=settings, pool=pool)
+                return await recovery.recover_accounts_for_startup()
+            finally:
+                await pool.close()
+
+        results = asyncio.run(_recover_accounts())
         for result in results:
-            print(
-                f"[cookie-sync:{result.status}] {result.account_id}: {result.detail}"
-                + (f" (updated={result.updated})" if result.status == "ok" else "")
-            )
+            print(f"[account-recovery:{result.status}] {result.account_id}: {result.detail}")
+            if result.provider_status or result.runtime_state:
+                print(
+                    f"  Provider={result.provider_status or '-'} Runtime={result.runtime_state or '-'}"
+                    + (f" Cookies={result.cookie_count}" if result.cookie_count is not None else "")
+                )
             if result.action:
                 print(f"  Action: {result.action}")
 

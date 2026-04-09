@@ -9,19 +9,16 @@ from uuid import uuid4
 
 from ..core.browser_cookie_sync import (
     BrowserLoginSession,
-    collect_cookies_from_browser_session,
     launch_browser_login_session,
     normalize_profile_dir,
     resolve_browser_path,
-    save_inventory,
-    sync_single_account_from_inventory,
 )
 from ..core.config import Settings
 from ..core.errors import ServiceError
 from ..core.security import AuthContext
 from ..core.telemetry import TelemetryService
 from ..db.repository import ChatRepository
-from ..schemas.accounts import AccountConfig, AccountInventory
+from ..schemas.accounts import AccountConfig, AccountInventory, load_account_inventory, save_account_inventory
 from ..schemas.admin import (
     AdminAccountUpsertRequest,
     AdminDashboardResponse,
@@ -29,6 +26,7 @@ from ..schemas.admin import (
     AdminReauthJobResponse,
 )
 from ..schemas.common import AccountSummary
+from .account_recovery_service import AccountRecoveryResult, AccountRecoveryService
 from .account_pool import AccountPool, AccountRuntimeState
 from .asset_service import AssetService
 from .chat_service import ChatService
@@ -64,6 +62,7 @@ class AdminConsoleService:
         pool: AccountPool,
         chat_service: ChatService,
         asset_service: AssetService,
+        recovery_service: AccountRecoveryService,
         telemetry: TelemetryService | None = None,
     ) -> None:
         self.settings = settings
@@ -71,6 +70,7 @@ class AdminConsoleService:
         self.pool = pool
         self.chat_service = chat_service
         self.asset_service = asset_service
+        self.recovery_service = recovery_service
         self.telemetry = telemetry
         self._jobs: dict[str, ReauthJob] = {}
         self._jobs_lock = asyncio.Lock()
@@ -149,8 +149,15 @@ class AdminConsoleService:
 
     async def upsert_account(self, request: AdminAccountUpsertRequest) -> AdminManagedAccount:
         inventory = self._load_inventory()
+        account_id = request.account_id.strip()
+        if not account_id:
+            raise ServiceError(
+                status_code=400,
+                code="account_id_required",
+                message="Account ID cannot be blank.",
+            )
         next_account = AccountConfig(
-            account_id=request.account_id.strip(),
+            account_id=account_id,
             enabled=request.enabled,
             provider_backend=request.provider_backend,
             secure_1psid=(request.secure_1psid or "").strip(),
@@ -173,6 +180,8 @@ class AdminConsoleService:
                 next_account.secure_1psid = prior.secure_1psid
             if next_account.secure_1psidts is None:
                 next_account.secure_1psidts = prior.secure_1psidts
+            next_account.last_recovery_at = prior.last_recovery_at
+            next_account.last_recovery_source = prior.last_recovery_source
             inventory.accounts = [
                 next_account if account.account_id == next_account.account_id else account
                 for account in inventory.accounts
@@ -231,60 +240,30 @@ class AdminConsoleService:
 
         async with self._jobs_lock:
             for job in self._jobs.values():
-                if job.account_id == account_id and job.status in {"checking_profile", "awaiting_login", "syncing"}:
+                if job.account_id == account_id and job.status in {
+                    "queued",
+                    "launching_browser",
+                    "awaiting_login",
+                    "collecting_cookies",
+                    "validating_provider",
+                }:
                     return self._job_response(job)
 
-        quick_sync = await self._sync_account_from_profile(account_id)
-        if quick_sync is not None:
-            return quick_sync
-
-        browser = (account.cookie_source_browser or self.settings.cookie_autosync_browser).lower()
-        browser_path = resolve_browser_path(browser, account.cookie_source_browser_path)
-        if browser_path is None:
-            raise ServiceError(
-                status_code=400,
-                code="browser_not_found",
-                message=f"Could not find a {browser} executable on this machine.",
-                details={
-                    "account_id": account_id,
-                    "action": "Install the browser or set cookie_source_browser_path.",
-                },
-            )
-        if not account.cookie_source_profile_dir:
-            raise ServiceError(
-                status_code=400,
-                code="cookie_profile_unconfigured",
-                message="This account does not yet have a browser profile configured.",
-                details={
-                    "account_id": account_id,
-                    "action": "Set cookie_source_profile_dir when creating or editing the account.",
-                },
-            )
-
-        profile_dir = normalize_profile_dir(Path(self.settings.accounts_config_path), account.cookie_source_profile_dir)
-        session = launch_browser_login_session(
-            browser=browser,
-            profile_dir=profile_dir,
-            browser_path=browser_path,
-            start_url=self.settings.cookie_autosync_start_url,
-        )
         job = ReauthJob(
             job_id=str(uuid4()),
             account_id=account_id,
-            status="awaiting_login",
-            detail="Browser opened. Finish Gemini login in that browser. The service will detect fresh cookies automatically.",
-            browser=browser,
-            profile_dir=str(profile_dir),
+            status="queued",
+            detail="Preparing account-specific Gemini recovery.",
+            browser=(account.cookie_source_browser or self.settings.cookie_autosync_browser).lower(),
+            profile_dir=account.cookie_source_profile_dir,
             launch_url=self.settings.cookie_autosync_start_url,
-            action_required="Finish Gemini login in the launched browser and keep the window open until this job turns completed.",
             result={
                 "runtime_state": runtime.effective_state.value if runtime else None,
             },
-            session=session,
         )
         async with self._jobs_lock:
             self._jobs[job.job_id] = job
-            job.task = asyncio.create_task(self._monitor_reauth_job(job.job_id))
+            job.task = asyncio.create_task(self._run_reauth_job(job.job_id))
         return self._job_response(job)
 
     async def complete_reauth_job(self, job_id: str) -> AdminReauthJobResponse:
@@ -297,27 +276,13 @@ class AdminConsoleService:
                 code="reauth_job_inactive",
                 message="This reauthentication job is no longer active.",
             )
-        try:
-            secure_1psid, secure_1psidts, cached_count = collect_cookies_from_browser_session(
-                job.session,
-                timeout_seconds=self.settings.cookie_autosync_timeout_seconds,
-            )
-            return await self._apply_cookies_and_refresh_job(
-                job,
-                secure_1psid=secure_1psid,
-                secure_1psidts=secure_1psidts,
-                cached_count=cached_count,
-                source="manual_sync",
-            )
-        except Exception as exc:
-            job.status = "awaiting_login"
-            job.detail = "The browser session is open, but Gemini cookies are not ready yet."
-            job.updated_at = _now_iso()
-            job.result = {"error": str(exc)}
-            job.action_required = (
-                "Open gemini.google.com/app in the launched browser, confirm chat works there, then wait a few seconds or click sync again."
-            )
-            return self._job_response(job)
+        result = await self.recovery_service.recover_account(
+            job.account_id,
+            allow_browser_launch=False,
+            browser_session=job.session,
+            browser=job.browser,
+        )
+        return await self._apply_recovery_result(job, result=result, source="manual_sync")
 
     async def cancel_reauth_job(self, job_id: str) -> AdminReauthJobResponse:
         job = await self._require_job(job_id)
@@ -401,43 +366,29 @@ class AdminConsoleService:
         terminate_browser_login_session(job.session)
         job.session = None
 
-    async def _sync_account_from_profile(self, account_id: str) -> AdminReauthJobResponse | None:
-        result = sync_single_account_from_inventory(
-            accounts_path=Path(self.settings.accounts_config_path),
-            account_id=account_id,
-            timeout_seconds=self.settings.cookie_autosync_timeout_seconds,
-            start_url=self.settings.cookie_autosync_start_url,
-            default_browser=self.settings.cookie_autosync_browser,
-            headless=self.settings.cookie_autosync_headless,
+    async def _run_reauth_job(self, job_id: str) -> None:
+        job = await self._require_job(job_id)
+        account = next((item for item in self._load_inventory().accounts if item.account_id == job.account_id), None)
+        if account is None:
+            job.status = "failed"
+            job.detail = "The account no longer exists in the inventory."
+            job.updated_at = _now_iso()
+            job.action_required = "Recreate the account and retry reauthentication."
+            job.task = None
+            return
+
+        job.status = "validating_provider"
+        job.detail = "Checking whether the existing profile is already enough to recover Gemini."
+        job.updated_at = _now_iso()
+        initial_result = await self.recovery_service.recover_account(
+            job.account_id,
+            allow_browser_launch=True,
+            browser=job.browser,
         )
-        if result.status != "ok":
-            return None
+        response = await self._apply_recovery_result(job, result=initial_result, source="initial_recovery")
+        if response.status != "awaiting_login":
+            return
 
-        runtime = await self.pool.refresh_account(account_id)
-        if not self._runtime_is_recovered(runtime):
-            return None
-
-        job = ReauthJob(
-            job_id=str(uuid4()),
-            account_id=account_id,
-            status="completed",
-            detail="Existing browser profile cookies were synced successfully.",
-            browser=result.browser,
-            profile_dir=result.profile_dir,
-            launch_url=self.settings.cookie_autosync_start_url,
-            action_required=None,
-            result={
-                "sync_source": "existing_profile",
-                "cached_cookie_count": self._extract_cached_cookie_count(result.detail),
-                "state": runtime.effective_state.value,
-                "account_status": runtime.account_status,
-            },
-        )
-        async with self._jobs_lock:
-            self._jobs[job.job_id] = job
-        return self._job_response(job)
-
-    async def _monitor_reauth_job(self, job_id: str) -> None:
         deadline = asyncio.get_running_loop().time() + self.settings.admin_reauth_timeout_seconds
         while True:
             await asyncio.sleep(self.settings.admin_reauth_poll_interval_seconds)
@@ -449,9 +400,9 @@ class AdminConsoleService:
                 return
             if job.session.process.poll() is not None:
                 job.status = "failed"
-                job.detail = "The reauthentication browser window was closed before Gemini cookies became valid."
+                job.detail = "The browser window closed before Gemini became available to the service."
                 job.updated_at = _now_iso()
-                job.action_required = "Restart reauthentication and keep the browser open until the job completes."
+                job.action_required = "Restart reauthentication and keep the browser open until Gemini chat works there."
                 job.task = None
                 return
             if asyncio.get_running_loop().time() >= deadline:
@@ -462,92 +413,60 @@ class AdminConsoleService:
                 job.action_required = "Restart reauthentication and complete Gemini login in the opened browser."
                 job.task = None
                 return
-            try:
-                secure_1psid, secure_1psidts, cached_count = collect_cookies_from_browser_session(
-                    job.session,
-                    timeout_seconds=max(2, min(self.settings.cookie_autosync_timeout_seconds, 5)),
-                )
-            except Exception:
-                job.status = "awaiting_login"
-                job.detail = "Waiting for a valid Gemini session in the opened browser..."
-                job.updated_at = _now_iso()
-                job.action_required = "Open gemini.google.com/app in the launched browser and make sure chat works there."
-                continue
-
-            response = await self._apply_cookies_and_refresh_job(
-                job,
-                secure_1psid=secure_1psid,
-                secure_1psidts=secure_1psidts,
-                cached_count=cached_count,
-                source="browser_monitor",
+            result = await self.recovery_service.recover_account(
+                job.account_id,
+                allow_browser_launch=False,
+                browser_session=job.session,
+                browser=job.browser,
             )
+            response = await self._apply_recovery_result(job, result=result, source="browser_monitor")
             if response.status in {"completed", "failed"}:
                 return
 
-    async def _apply_cookies_and_refresh_job(
+    async def _apply_recovery_result(
         self,
         job: ReauthJob,
         *,
-        secure_1psid: str,
-        secure_1psidts: str,
-        cached_count: int,
+        result: AccountRecoveryResult,
         source: str,
     ) -> AdminReauthJobResponse:
-        job.status = "syncing"
-        job.detail = "Fresh browser cookies detected. Refreshing the account runtime now."
+        if result.session is not None and job.session is None:
+            job.session = result.session
+        if result.browser:
+            job.browser = result.browser
+        if result.profile_dir:
+            job.profile_dir = result.profile_dir
         job.updated_at = _now_iso()
-        inventory = self._load_inventory()
-        updated = False
-        for account in inventory.accounts:
-            if account.account_id != job.account_id:
-                continue
-            account.secure_1psid = secure_1psid
-            account.secure_1psidts = secure_1psidts
-            updated = True
-            break
-        if not updated:
-            raise ServiceError(
-                status_code=404,
-                code="account_not_found",
-                message=f"Account {job.account_id} does not exist.",
-            )
-        self._save_inventory(inventory)
-        await self.pool.sync_inventory(force_refresh=True)
-        runtime = await self.pool.refresh_account(job.account_id)
         job.result = {
-            "sync_source": source,
-            "cached_cookie_count": cached_count,
-            "state": runtime.effective_state.value,
-            "account_status": runtime.account_status,
+            "source": source,
+            "recovery_source": result.recovery_source,
+            "cookie_count": result.cookie_count,
+            "provider_status": result.provider_status,
+            "runtime_state": result.runtime_state,
+            "account_models": result.account_models,
+            "updated": result.updated,
+            "code": result.code,
         }
-        if self._runtime_is_recovered(runtime):
+        if result.status == "completed":
             await self._terminate_job_session(job)
             if job.task is not None and job.task is not asyncio.current_task():
                 job.task.cancel()
             job.task = None
             job.status = "completed"
-            job.detail = "Cookies synced and the account is routable again."
-            job.updated_at = _now_iso()
+            job.detail = result.detail
             job.action_required = None
             return self._job_response(job)
-
-        job.status = "awaiting_login"
-        job.detail = "Cookies were refreshed, but Gemini still reports the account as unauthenticated."
-        job.updated_at = _now_iso()
-        job.action_required = "In the opened browser, make sure gemini.google.com/app fully loads and can answer one message."
+        if result.status == "awaiting_login":
+            job.status = "awaiting_login"
+            job.detail = result.detail
+            job.action_required = result.action
+            return self._job_response(job)
+        job.status = "failed"
+        job.detail = result.detail
+        job.action_required = result.action
+        if job.task is not None and job.task.done():
+            job.task = None
         return self._job_response(job)
-
-    def _runtime_is_recovered(self, runtime) -> bool:
-        return runtime.state in {AccountRuntimeState.READY, AccountRuntimeState.DEGRADED} and runtime.account_status == "AVAILABLE"
-
-    def _extract_cached_cookie_count(self, detail: str) -> int | None:
-        marker = "refreshed "
-        if marker not in detail:
-            return None
-        try:
-            return int(detail.split(marker, 1)[1].split(" ", 1)[0])
-        except (TypeError, ValueError):
-            return None
 
     async def _require_job(self, job_id: str) -> ReauthJob:
         async with self._jobs_lock:
@@ -561,14 +480,11 @@ class AdminConsoleService:
         return job
 
     def _load_inventory(self) -> AccountInventory:
-        path = Path(self.settings.accounts_config_path)
-        if not path.exists():
-            return AccountInventory(accounts=[])
-        payload = json.loads(path.read_text(encoding="utf-8"))
-        return AccountInventory.model_validate(payload)
+        inventory, _, _ = load_account_inventory(Path(self.settings.accounts_config_path), save_clean=True)
+        return inventory
 
     def _save_inventory(self, inventory: AccountInventory) -> None:
-        save_inventory(Path(self.settings.accounts_config_path), inventory.model_dump(mode="json"))
+        save_account_inventory(Path(self.settings.accounts_config_path), inventory.model_dump(mode="json"))
 
     def _managed_account_response(
         self,
@@ -589,6 +505,8 @@ class AdminConsoleService:
             verify_ssl=account.verify_ssl,
             tags=account.tags,
             has_cookie_bundle=bool(account.secure_1psid and account.secure_1psidts),
+            last_recovery_at=account.last_recovery_at,
+            last_recovery_source=account.last_recovery_source,
             runtime=runtime,
         )
 

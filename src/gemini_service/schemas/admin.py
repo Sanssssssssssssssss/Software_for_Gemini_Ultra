@@ -21,11 +21,13 @@ class AdminManagedAccount(BaseModel):
     verify_ssl: bool = True
     tags: list[str] = Field(default_factory=list)
     has_cookie_bundle: bool = False
+    last_recovery_at: str | None = None
+    last_recovery_source: str | None = None
     runtime: AccountSummary | None = None
 
 
 class AdminAccountUpsertRequest(BaseModel):
-    account_id: str
+    account_id: str = Field(min_length=1)
     enabled: bool = True
     provider_backend: str = "gemini_web"
     cookie_source_browser: str | None = None
@@ -44,7 +46,16 @@ class AdminAccountUpsertRequest(BaseModel):
 class AdminReauthJobResponse(BaseModel):
     job_id: str
     account_id: str
-    status: Literal["checking_profile", "awaiting_login", "syncing", "completed", "failed", "cancelled"]
+    status: Literal[
+        "queued",
+        "launching_browser",
+        "awaiting_login",
+        "collecting_cookies",
+        "validating_provider",
+        "completed",
+        "failed",
+        "cancelled",
+    ]
     detail: str
     browser: str | None = None
     profile_dir: str | None = None

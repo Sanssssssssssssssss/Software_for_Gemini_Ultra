@@ -15,6 +15,8 @@ from urllib.request import urlopen
 
 from gemini_webapi.utils.rotate_1psidts import _get_cookie_cache_dir
 
+from ..schemas.accounts import load_account_inventory, save_account_inventory
+
 COOKIE_NAMES = ("__Secure-1PSID", "__Secure-1PSIDTS")
 WINDOWS_BROWSER_PATHS = {
     "chrome": [
@@ -69,16 +71,24 @@ class BrowserLoginSession:
     start_url: str
 
 
+@dataclass(slots=True)
+class CookieBundle:
+    secure_1psid: str
+    secure_1psidts: str
+    cookies: list[dict[str, Any]]
+
+
 def _is_process_running(process: subprocess.Popen[Any]) -> bool:
     return process.poll() is None
 
 
 def load_inventory(path: Path) -> dict[str, Any]:
-    return json.loads(path.read_text(encoding="utf-8"))
+    inventory, _, _ = load_account_inventory(path, save_clean=True)
+    return inventory.model_dump(mode="json")
 
 
 def save_inventory(path: Path, payload: dict[str, Any]) -> None:
-    path.write_text(json.dumps(payload, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+    save_account_inventory(path, payload)
 
 
 def default_browser_paths(browser: str) -> list[Path]:
@@ -246,6 +256,10 @@ def _write_cookie_cache(secure_1psid: str, cookies: list[dict[str, Any]]) -> int
     return len(filtered)
 
 
+def write_cookie_bundle_cache(bundle: CookieBundle) -> int:
+    return _write_cookie_cache(bundle.secure_1psid, bundle.cookies)
+
+
 def _looks_like_cookie_pair(secure_1psid: str, secure_1psidts: str) -> bool:
     return (
         bool(secure_1psid)
@@ -255,7 +269,7 @@ def _looks_like_cookie_pair(secure_1psid: str, secure_1psidts: str) -> bool:
     )
 
 
-def sync_cookies_from_profile(
+def extract_cookie_bundle_from_profile(
     *,
     browser: str,
     profile_dir: Path,
@@ -263,7 +277,7 @@ def sync_cookies_from_profile(
     start_url: str,
     timeout_seconds: int,
     headless: bool,
-) -> tuple[str, str, int]:
+) -> CookieBundle:
     valid, _, action = validate_profile_dir(profile_dir)
     if not valid:
         raise FileNotFoundError(action or "The configured browser profile is not ready.")
@@ -294,8 +308,11 @@ def sync_cookies_from_profile(
             raise RuntimeError(
                 "The browser profile returned cookie values that do not look like Gemini web session cookies."
             )
-        cached_count = _write_cookie_cache(secure_1psid, cookies)
-        return secure_1psid, secure_1psidts, cached_count
+        return CookieBundle(
+            secure_1psid=secure_1psid,
+            secure_1psidts=secure_1psidts,
+            cookies=cookies,
+        )
     finally:
         process.terminate()
         try:
@@ -303,6 +320,27 @@ def sync_cookies_from_profile(
         except subprocess.TimeoutExpired:
             process.kill()
             process.wait(timeout=10)
+
+
+def sync_cookies_from_profile(
+    *,
+    browser: str,
+    profile_dir: Path,
+    browser_path: Path,
+    start_url: str,
+    timeout_seconds: int,
+    headless: bool,
+) -> tuple[str, str, int]:
+    bundle = extract_cookie_bundle_from_profile(
+        browser=browser,
+        profile_dir=profile_dir,
+        browser_path=browser_path,
+        start_url=start_url,
+        timeout_seconds=timeout_seconds,
+        headless=headless,
+    )
+    cached_count = _write_cookie_cache(bundle.secure_1psid, bundle.cookies)
+    return bundle.secure_1psid, bundle.secure_1psidts, cached_count
 
 
 def launch_browser_login_session(
@@ -359,11 +397,11 @@ def terminate_browser_login_session(session: BrowserLoginSession) -> None:
         session.process.wait(timeout=10)
 
 
-def collect_cookies_from_browser_session(
+def extract_cookie_bundle_from_browser_session(
     session: BrowserLoginSession,
     *,
     timeout_seconds: int,
-) -> tuple[str, str, int]:
+) -> CookieBundle:
     _wait_for_cdp(session.port, timeout_seconds=min(timeout_seconds, 20))
     extracted = _extract_cookies_via_cdp(session.port)
     if extracted is None:
@@ -375,8 +413,21 @@ def collect_cookies_from_browser_session(
         raise RuntimeError(
             "The browser profile returned cookie values that do not look like Gemini web session cookies."
         )
-    cached_count = _write_cookie_cache(secure_1psid, cookies)
-    return secure_1psid, secure_1psidts, cached_count
+    return CookieBundle(
+        secure_1psid=secure_1psid,
+        secure_1psidts=secure_1psidts,
+        cookies=cookies,
+    )
+
+
+def collect_cookies_from_browser_session(
+    session: BrowserLoginSession,
+    *,
+    timeout_seconds: int,
+) -> tuple[str, str, int]:
+    bundle = extract_cookie_bundle_from_browser_session(session, timeout_seconds=timeout_seconds)
+    cached_count = _write_cookie_cache(bundle.secure_1psid, bundle.cookies)
+    return bundle.secure_1psid, bundle.secure_1psidts, cached_count
 
 
 def sync_single_account_from_inventory(

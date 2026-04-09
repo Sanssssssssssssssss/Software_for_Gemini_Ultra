@@ -143,6 +143,7 @@ export function AdminPage() {
 
   useEffect(() => {
     let cancelled = false;
+    let interval = 0;
     async function load() {
       try {
         const currentMe = await getMe();
@@ -166,14 +167,15 @@ export function AdminPage() {
       }
     }
     void load();
-    const interval = window.setInterval(() => {
+    const hasActiveJobs = dashboard?.reauth_jobs.some((job) => !job.is_terminal) ?? false;
+    interval = window.setInterval(() => {
       void refreshDashboard().catch(() => undefined);
-    }, 15000);
+    }, hasActiveJobs ? 2500 : 15000);
     return () => {
       cancelled = true;
       window.clearInterval(interval);
     };
-  }, [navigate, selectedAccountId]);
+  }, [dashboard?.reauth_jobs, navigate, selectedAccountId]);
 
   const selectedAccount = useMemo(
     () => dashboard?.inventory_accounts.find((item) => item.account_id === selectedAccountId) ?? null,
@@ -364,7 +366,14 @@ export function AdminPage() {
                         <div><span>队列</span><strong>{account.runtime?.queue_depth ?? 0}</strong></div>
                         <div><span>Cookie</span><strong>{account.has_cookie_bundle ? "READY" : "MISSING"}</strong></div>
                       </div>
-                      <div className="runtime-account__meta"><span>{account.runtime?.state_reason || "暂无状态补充"}</span><span>{account.tags.length ? account.tags.join(", ") : "无标签"}</span></div>
+                      <div className="runtime-account__meta">
+                        <span>{account.runtime?.state_reason || "暂无状态补充"}</span>
+                        <span>{account.tags.length ? account.tags.join(", ") : "无标签"}</span>
+                      </div>
+                      <div className="runtime-account__meta">
+                        <span>恢复来源：{account.last_recovery_source || "无"}</span>
+                        <span>恢复时间：{formatTimestamp(account.last_recovery_at)}</span>
+                      </div>
                       <div className="account-admin-card__actions">
                         <button className="secondary-link compact-link button-reset" type="button" onClick={() => { setSelectedAccountId(account.account_id); setAccountForm(toFormState(account)); }}>编辑</button>
                         <button className="secondary-link compact-link button-reset" type="button" onClick={() => void startAdminReauth(account.account_id).then(() => refreshDashboard())}>重登</button>
@@ -419,7 +428,11 @@ export function AdminPage() {
                       <div className="runtime-account__identity"><strong>{job.account_id}</strong><p>{job.detail}</p></div>
                       <span className={`status-pill compact state-badge state-${job.status}`}>{job.status.toUpperCase()}</span>
                     </div>
-                    <div className="runtime-account__meta"><span>{job.browser || "未知浏览器"}</span><span>{job.profile_dir || "未配置 profile"}</span></div>
+                      <div className="runtime-account__meta"><span>{job.browser || "未知浏览器"}</span><span>{job.profile_dir || "未配置 profile"}</span></div>
+                      <div className="runtime-account__meta">
+                        <span>恢复来源：{String(job.result.recovery_source || job.result.source || "-")}</span>
+                        <span>Provider：{String(job.result.provider_status || "-")}</span>
+                      </div>
                     <div className="account-admin-card__actions">
                       <button className="primary-button button-reset" disabled={!!pendingActions[completeKey] || job.status === "completed" || job.status === "cancelled"} type="button" onClick={() => void handleCompleteReauth(job)}>{pendingActions[completeKey] ? "同步中..." : "完成同步"}</button>
                       <button className="secondary-link compact-link button-reset" disabled={!!pendingActions[cancelKey] || !job.launched} type="button" onClick={() => void handleCancelReauth(job)}>{pendingActions[cancelKey] ? "取消中..." : "取消任务"}</button>

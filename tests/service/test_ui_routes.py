@@ -4,8 +4,8 @@ import time
 from pathlib import Path
 import sys
 
-from gemini_service.core.browser_cookie_sync import CookieSyncResult
 from gemini_service.core.browser_cookie_sync import BrowserLoginSession
+from gemini_service.services.account_recovery_service import AccountRecoveryResult
 
 
 def _copy_mock_accounts(isolated_service_env) -> Path:
@@ -296,36 +296,43 @@ def test_ui_admin_reauth_job_flow(client_factory, monkeypatch, isolated_service_
         def wait(self, timeout=None):
             return 0
 
-    def _fake_launch_browser_login_session(**kwargs):
-        return BrowserLoginSession(
-            browser=kwargs["browser"],
-            browser_path=Path(kwargs["browser_path"]),
-            profile_dir=Path(kwargs["profile_dir"]),
-            port=9222,
-            process=_DummyProcess(),
-            start_url=kwargs["start_url"],
+    async def _fake_recover_account(self, account_id, *, allow_browser_launch, browser_session=None, browser=None):
+        if browser_session is None:
+            return AccountRecoveryResult(
+                account_id=account_id,
+                status="awaiting_login",
+                code="interactive_login_required",
+                detail="Browser opened. Finish Gemini login in that browser.",
+                browser="chrome",
+                profile_dir="data/chrome-ops-reauth",
+                launched=True,
+                recovery_source="browser_launch",
+                action="Finish Gemini login in the launched browser.",
+                session=BrowserLoginSession(
+                    browser="chrome",
+                    browser_path=Path(sys.executable),
+                    profile_dir=Path("data/chrome-ops-reauth"),
+                    port=9222,
+                    process=_DummyProcess(),
+                    start_url="https://gemini.google.com/app",
+                ),
+            )
+        return AccountRecoveryResult(
+            account_id=account_id,
+            status="completed",
+            code="recovery_completed",
+            detail="Cookies synced and Gemini is routable again.",
+            browser="chrome",
+            profile_dir="data/chrome-ops-reauth",
+            recovery_source="browser_session",
+            cookie_count=12,
+            provider_status="AVAILABLE",
+            runtime_state="ready",
         )
 
     monkeypatch.setattr(
-        "gemini_service.services.admin_console_service.sync_single_account_from_inventory",
-        lambda **kwargs: CookieSyncResult(
-            account_id="ops-account-reauth",
-            status="error",
-            detail="interactive login required",
-            code="cookie_sync_failed",
-        ),
-    )
-    monkeypatch.setattr(
-        "gemini_service.services.admin_console_service.launch_browser_login_session",
-        _fake_launch_browser_login_session,
-    )
-    monkeypatch.setattr(
-        "gemini_service.services.admin_console_service.collect_cookies_from_browser_session",
-        lambda session, timeout_seconds: ("cookie-value", "sidts-cookie-value", 12),
-    )
-    monkeypatch.setattr(
-        "gemini_service.core.browser_cookie_sync.terminate_browser_login_session",
-        lambda session: None,
+        "gemini_service.services.account_recovery_service.AccountRecoveryService.recover_account",
+        _fake_recover_account,
     )
 
     with client_factory(
@@ -360,8 +367,7 @@ def test_ui_admin_reauth_job_flow(client_factory, monkeypatch, isolated_service_
 
         started = client.post("/ui/api/admin/accounts/ops-account-reauth/reauth")
         assert started.status_code == 200
-        assert started.json()["status"] == "awaiting_login"
-        assert started.json()["monitoring"] is True
+        assert started.json()["status"] in {"queued", "validating_provider"}
 
         completed = client.post(f"/ui/api/admin/reauth-jobs/{started.json()['job_id']}/complete")
         assert completed.status_code == 200
@@ -372,17 +378,24 @@ def test_ui_admin_reauth_job_flow(client_factory, monkeypatch, isolated_service_
 def test_ui_admin_reauth_job_can_complete_from_existing_profile(client_factory, monkeypatch, isolated_service_env):
     accounts_path = _copy_mock_accounts(isolated_service_env)
 
-    monkeypatch.setattr(
-        "gemini_service.services.admin_console_service.sync_single_account_from_inventory",
-        lambda **kwargs: CookieSyncResult(
-            account_id="mock-ready-1",
-            status="ok",
-            detail="Browser profile cookies synced successfully and refreshed 12 cached google.com cookies.",
+    async def _fake_recover_account(self, account_id, *, allow_browser_launch, browser_session=None, browser=None):
+        return AccountRecoveryResult(
+            account_id=account_id,
+            status="completed",
+            code="recovery_completed",
+            detail="Existing browser profile cookies were synced successfully.",
             updated=True,
-            profile_dir="data/chrome-acc-1",
             browser="chrome",
-            code="cookie_sync_ok",
-        ),
+            profile_dir="data/chrome-acc-1",
+            recovery_source="profile_sync",
+            cookie_count=12,
+            provider_status="AVAILABLE",
+            runtime_state="ready",
+        )
+
+    monkeypatch.setattr(
+        "gemini_service.services.account_recovery_service.AccountRecoveryService.recover_account",
+        _fake_recover_account,
     )
 
     with client_factory(
@@ -399,9 +412,14 @@ def test_ui_admin_reauth_job_can_complete_from_existing_profile(client_factory, 
 
         started = client.post("/ui/api/admin/accounts/mock-ready-1/reauth")
         assert started.status_code == 200
-        assert started.json()["status"] == "completed"
-        assert started.json()["launched"] is False
-        assert started.json()["monitoring"] is False
+        assert started.json()["status"] in {"queued", "validating_provider"}
+
+        time.sleep(0.1)
+        jobs = client.get("/ui/api/admin/reauth-jobs")
+        assert jobs.status_code == 200
+        assert jobs.json()["items"][0]["status"] == "completed"
+        assert jobs.json()["items"][0]["launched"] is False
+        assert jobs.json()["items"][0]["monitoring"] is False
 
 
 def test_ui_admin_reauth_job_auto_completes_after_browser_login(client_factory, monkeypatch, isolated_service_env):
@@ -419,40 +437,57 @@ def test_ui_admin_reauth_job_auto_completes_after_browser_login(client_factory, 
 
     cookie_attempts = {"count": 0}
 
-    monkeypatch.setattr(
-        "gemini_service.services.admin_console_service.sync_single_account_from_inventory",
-        lambda **kwargs: CookieSyncResult(
-            account_id="mock-ready-1",
-            status="error",
-            detail="interactive login required",
-            code="cookie_sync_failed",
-        ),
-    )
-    monkeypatch.setattr(
-        "gemini_service.services.admin_console_service.launch_browser_login_session",
-        lambda **kwargs: BrowserLoginSession(
-            browser=kwargs["browser"],
-            browser_path=Path(kwargs["browser_path"]),
-            profile_dir=Path(kwargs["profile_dir"]),
-            port=9222,
-            process=_DummyProcess(),
-            start_url=kwargs["start_url"],
-        ),
-    )
-
-    def _collect(session, timeout_seconds):
+    async def _fake_recover_account(self, account_id, *, allow_browser_launch, browser_session=None, browser=None):
+        if browser_session is None:
+            return AccountRecoveryResult(
+                account_id=account_id,
+                status="awaiting_login",
+                code="interactive_login_required",
+                detail="Browser opened. Finish Gemini login in that browser.",
+                browser="chrome",
+                profile_dir="data/chrome-ops-auto-reauth",
+                launched=True,
+                recovery_source="browser_launch",
+                action="Finish Gemini login in the launched browser.",
+                session=BrowserLoginSession(
+                    browser="chrome",
+                    browser_path=Path(sys.executable),
+                    profile_dir=Path("data/chrome-ops-auto-reauth"),
+                    port=9222,
+                    process=_DummyProcess(),
+                    start_url="https://gemini.google.com/app",
+                ),
+            )
         cookie_attempts["count"] += 1
         if cookie_attempts["count"] == 1:
-            raise RuntimeError("cookies not ready")
-        return ("cookie-value", "sidts-cookie-value", 8)
+            return AccountRecoveryResult(
+                account_id=account_id,
+                status="awaiting_login",
+                code="gemini_not_logged_in",
+                detail="Waiting for a valid Gemini session in the launched browser.",
+                browser="chrome",
+                profile_dir="data/chrome-ops-auto-reauth",
+                launched=True,
+                recovery_source="browser_session",
+                action="Open gemini.google.com/app in the launched browser and make sure chat works there.",
+                session=browser_session,
+            )
+        return AccountRecoveryResult(
+            account_id=account_id,
+            status="completed",
+            code="recovery_completed",
+            detail="Cookies synced and Gemini is routable again.",
+            browser="chrome",
+            profile_dir="data/chrome-ops-auto-reauth",
+            recovery_source="browser_session",
+            cookie_count=8,
+            provider_status="AVAILABLE",
+            runtime_state="ready",
+        )
 
     monkeypatch.setattr(
-        "gemini_service.services.admin_console_service.collect_cookies_from_browser_session",
-        _collect,
-    )
-    monkeypatch.setattr(
-        "gemini_service.core.browser_cookie_sync.terminate_browser_login_session",
-        lambda session: None,
+        "gemini_service.services.account_recovery_service.AccountRecoveryService.recover_account",
+        _fake_recover_account,
     )
 
     with client_factory(
@@ -489,7 +524,7 @@ def test_ui_admin_reauth_job_auto_completes_after_browser_login(client_factory, 
 
         started = client.post("/ui/api/admin/accounts/ops-account-auto-reauth/reauth")
         assert started.status_code == 200
-        assert started.json()["status"] == "awaiting_login"
+        assert started.json()["status"] in {"queued", "validating_provider"}
 
         time.sleep(0.25)
         jobs = client.get("/ui/api/admin/reauth-jobs")

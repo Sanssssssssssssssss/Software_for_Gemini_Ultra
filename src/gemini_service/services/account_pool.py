@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import asyncio
-import json
 import logging
 from collections import deque
 from dataclasses import dataclass, field
@@ -18,7 +17,7 @@ from ..adapters.gemini_web import GeminiWebAccountAdapter
 from ..adapters.mock import MockAccountAdapter
 from ..core.config import Settings
 from ..core.errors import ServiceError
-from ..schemas.accounts import AccountConfig, AccountInventory
+from ..schemas.accounts import AccountConfig, load_account_inventory
 from ..schemas.common import AccountSummary
 
 
@@ -194,6 +193,17 @@ class AccountPool:
         await self._refresh_runtime(runtime)
         return runtime
 
+    async def probe_candidate(self, config: AccountConfig) -> AccountSummary:
+        runtime = AccountRuntime(
+            config=config,
+            adapter=self._build_adapter(config),
+        )
+        try:
+            await self._probe_runtime(runtime)
+            return runtime.summary()
+        finally:
+            await runtime.adapter.close()
+
     async def refresh_if_due(self, force: bool = False) -> None:
         if not force and self._last_refresh_at is not None:
             age = datetime.now(timezone.utc) - self._last_refresh_at
@@ -367,8 +377,7 @@ class AccountPool:
         if not path.exists():
             return {}
 
-        payload = json.loads(path.read_text(encoding="utf-8"))
-        inventory = AccountInventory.model_validate(payload)
+        inventory, _, _ = load_account_inventory(path, save_clean=True)
         runtimes: dict[str, AccountRuntime] = {}
         for account in inventory.accounts:
             runtime = AccountRuntime(
@@ -386,8 +395,7 @@ class AccountPool:
         path = Path(self.settings.accounts_config_path)
         if not path.exists():
             return {}
-        payload = json.loads(path.read_text(encoding="utf-8"))
-        inventory = AccountInventory.model_validate(payload)
+        inventory, _, _ = load_account_inventory(path, save_clean=True)
         return {account.account_id: account for account in inventory.accounts}
 
     async def _reload_runtime_config(self, runtime: AccountRuntime) -> None:
@@ -407,6 +415,9 @@ class AccountPool:
 
     async def _refresh_runtime(self, runtime: AccountRuntime) -> None:
         await self._reload_runtime_config(runtime)
+        await self._probe_runtime(runtime)
+
+    async def _probe_runtime(self, runtime: AccountRuntime) -> None:
         now = datetime.now(timezone.utc)
         runtime.last_checked_at = now
 
