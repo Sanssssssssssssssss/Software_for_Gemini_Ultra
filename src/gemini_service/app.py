@@ -24,6 +24,7 @@ from .schemas.common import ApiError, ErrorResponse
 from .services.account_pool import AccountPool
 from .services.asset_cleanup_service import AssetCleanupService
 from .services.asset_service import AssetService
+from .services.admin_console_service import AdminConsoleService
 from .services.batch_service import BatchService
 from .services.chat_service import ChatService
 from .storage.local import LocalAssetStorage
@@ -63,6 +64,15 @@ async def lifespan(app: FastAPI):
     await batch_service.start()
     app.state.chat_service = chat_service
     app.state.batch_service = batch_service
+    admin_console_service = AdminConsoleService(
+        settings=settings,
+        repository=repository,
+        pool=pool,
+        chat_service=chat_service,
+        asset_service=asset_service,
+        telemetry=app.state.telemetry,
+    )
+    app.state.admin_console_service = admin_console_service
     logging.getLogger("gemini_service").info(
         "service_startup",
         extra={
@@ -77,6 +87,7 @@ async def lifespan(app: FastAPI):
     try:
         yield
     finally:
+        await admin_console_service.close()
         await asset_cleanup_service.close()
         await batch_service.close()
         await repository.close()

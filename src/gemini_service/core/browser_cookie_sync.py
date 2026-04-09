@@ -59,6 +59,16 @@ class CookieSyncResult:
     action: str | None = None
 
 
+@dataclass(slots=True)
+class BrowserLoginSession:
+    browser: str
+    browser_path: Path
+    profile_dir: Path
+    port: int
+    process: subprocess.Popen[Any]
+    start_url: str
+
+
 def load_inventory(path: Path) -> dict[str, Any]:
     return json.loads(path.read_text(encoding="utf-8"))
 
@@ -129,6 +139,12 @@ def validate_profile_dir(profile_dir: Path) -> tuple[bool, str, str | None]:
     return True, "", None
 
 
+def ensure_profile_dir(profile_dir: Path) -> Path:
+    profile_dir = profile_dir.expanduser().resolve()
+    profile_dir.mkdir(parents=True, exist_ok=True)
+    return profile_dir
+
+
 def _find_free_port() -> int:
     with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
         sock.bind(("127.0.0.1", 0))
@@ -148,7 +164,7 @@ def _wait_for_cdp(port: int, timeout_seconds: int) -> None:
     raise TimeoutError("Timed out waiting for the browser debugging endpoint.")
 
 
-def _extract_cookies_via_cdp(port: int) -> tuple[str, str] | None:
+def _extract_cookies_via_cdp(port: int) -> tuple[str, str, list[dict[str, Any]]] | None:
     try:
         from playwright.sync_api import sync_playwright
     except ImportError as exc:
@@ -283,6 +299,67 @@ def sync_cookies_from_profile(
         except subprocess.TimeoutExpired:
             process.kill()
             process.wait(timeout=10)
+
+
+def launch_browser_login_session(
+    *,
+    browser: str,
+    profile_dir: Path,
+    browser_path: Path,
+    start_url: str,
+) -> BrowserLoginSession:
+    profile_dir = ensure_profile_dir(profile_dir)
+    port = _find_free_port()
+    args = [
+        str(browser_path),
+        f"--user-data-dir={profile_dir}",
+        f"--remote-debugging-port={port}",
+        "--no-first-run",
+        "--no-default-browser-check",
+        "--new-window",
+        start_url,
+    ]
+    process = subprocess.Popen(args)
+    _wait_for_cdp(port, timeout_seconds=20)
+    return BrowserLoginSession(
+        browser=browser,
+        browser_path=browser_path,
+        profile_dir=profile_dir,
+        port=port,
+        process=process,
+        start_url=start_url,
+    )
+
+
+def terminate_browser_login_session(session: BrowserLoginSession) -> None:
+    if session.process.poll() is not None:
+        return
+    session.process.terminate()
+    try:
+        session.process.wait(timeout=10)
+    except subprocess.TimeoutExpired:
+        session.process.kill()
+        session.process.wait(timeout=10)
+
+
+def collect_cookies_from_browser_session(
+    session: BrowserLoginSession,
+    *,
+    timeout_seconds: int,
+) -> tuple[str, str, int]:
+    _wait_for_cdp(session.port, timeout_seconds=min(timeout_seconds, 20))
+    extracted = _extract_cookies_via_cdp(session.port)
+    if extracted is None:
+        raise RuntimeError(
+            "Required Gemini cookies were not found in the configured browser profile."
+        )
+    secure_1psid, secure_1psidts, cookies = extracted
+    if not _looks_like_cookie_pair(secure_1psid, secure_1psidts):
+        raise RuntimeError(
+            "The browser profile returned cookie values that do not look like Gemini web session cookies."
+        )
+    cached_count = _write_cookie_cache(secure_1psid, cookies)
+    return secure_1psid, secure_1psidts, cached_count
 
 
 def sync_inventory_from_browser_profiles(

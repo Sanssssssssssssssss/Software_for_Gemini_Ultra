@@ -212,6 +212,39 @@ class AccountPool:
             )
             self._last_refresh_at = datetime.now(timezone.utc)
 
+    async def sync_inventory(self, force_refresh: bool = True) -> None:
+        async with self._refresh_lock:
+            latest = self._load_inventory_configs()
+            existing_ids = set(self._runtimes)
+            latest_ids = set(latest)
+
+            removed_ids = existing_ids - latest_ids
+            for account_id in removed_ids:
+                runtime = self._runtimes.pop(account_id)
+                await runtime.adapter.close()
+
+            for account_id, config in latest.items():
+                runtime = self._runtimes.get(account_id)
+                if runtime is None:
+                    runtime = AccountRuntime(
+                        config=config,
+                        adapter=self._build_adapter(config),
+                    )
+                    if not config.enabled:
+                        runtime.state = AccountRuntimeState.DISABLED
+                        runtime.last_transition_at = datetime.now(timezone.utc)
+                        runtime.state_reason = "account disabled in inventory"
+                    self._runtimes[account_id] = runtime
+                    continue
+                await self._reload_runtime_config(runtime)
+
+            if force_refresh:
+                await asyncio.gather(
+                    *(self._refresh_runtime(runtime) for runtime in self._runtimes.values()),
+                    return_exceptions=False,
+                )
+                self._last_refresh_at = datetime.now(timezone.utc)
+
     async def list_account_summaries(self, force_refresh: bool = False) -> list[AccountSummary]:
         await self.refresh_if_due(force=force_refresh)
         return [runtime.summary() for runtime in self._runtimes.values()]

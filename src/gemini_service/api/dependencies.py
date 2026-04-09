@@ -8,6 +8,7 @@ from ..core.errors import ServiceError
 from ..core.security import AuthContext
 from ..core.telemetry import TelemetryService
 from ..services.account_pool import AccountPool
+from ..services.admin_console_service import AdminConsoleService
 from ..services.asset_service import AssetService
 from ..services.batch_service import BatchService
 from ..services.chat_service import ChatService
@@ -48,6 +49,17 @@ def get_asset_service(request: Request) -> AssetService:
             status_code=503,
             code="asset_service_unavailable",
             message="Asset service has not been initialized yet.",
+        )
+    return service
+
+
+def get_admin_console_service(request: Request) -> AdminConsoleService:
+    service = getattr(request.app.state, "admin_console_service", None)
+    if service is None:
+        raise ServiceError(
+            status_code=503,
+            code="admin_console_service_unavailable",
+            message="Admin console service has not been initialized yet.",
         )
     return service
 

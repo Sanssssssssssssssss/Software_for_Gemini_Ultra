@@ -3,8 +3,8 @@ from __future__ import annotations
 from pathlib import Path
 from urllib.parse import parse_qs
 
-from fastapi import APIRouter, Depends, File, Form, Request, UploadFile
-from fastapi.responses import FileResponse, HTMLResponse, RedirectResponse, StreamingResponse
+from fastapi import APIRouter, Depends, File, Form, Query, Request, UploadFile
+from fastapi.responses import FileResponse, HTMLResponse, RedirectResponse, Response, StreamingResponse
 from pydantic import BaseModel
 
 from ...core.bootstrap import evaluate_bootstrap_status
@@ -12,13 +12,16 @@ from ...core.config import get_settings
 from ...core.errors import ServiceError
 from ...core.security import AuthContext
 from ...core.telemetry import TelemetryService
-from ...schemas.common import BootstrapStatusResponse, MessageRequest, SessionCreateRequest
+from ...schemas.admin import AdminAccountUpsertRequest
+from ...schemas.common import BootstrapStatusResponse, MessageRequest, SessionCreateRequest, SessionUpdateRequest
 from ...services.account_pool import AccountPool
+from ...services.admin_console_service import AdminConsoleService
 from ...services.asset_service import AssetService
 from ...services.batch_service import BatchService
 from ...services.chat_service import ChatService
 from ..dependencies import (
     get_account_pool,
+    get_admin_console_service,
     get_asset_service,
     get_batch_service,
     get_chat_service,
@@ -312,63 +315,42 @@ async def ui_get_session(
     return await chat_service.get_session(session_id, auth=auth)
 
 
+@router.patch("/ui/api/sessions/{session_id}")
+async def ui_update_session(
+    session_id: str,
+    payload: SessionUpdateRequest,
+    auth: AuthContext = Depends(require_ui_user),
+    chat_service: ChatService = Depends(get_chat_service),
+):
+    return await chat_service.update_session(session_id, payload, auth=auth)
+
+
+@router.delete("/ui/api/sessions/{session_id}")
+async def ui_delete_session(
+    session_id: str,
+    auth: AuthContext = Depends(require_ui_user),
+    chat_service: ChatService = Depends(get_chat_service),
+):
+    await chat_service.delete_session(session_id, auth=auth)
+    return {"ok": True, "session_id": session_id}
+
+
 @router.get("/ui/api/admin/overview")
 async def ui_admin_overview(
     auth: AuthContext = Depends(require_ui_admin),
-    pool: AccountPool = Depends(get_account_pool),
-    chat_service: ChatService = Depends(get_chat_service),
-    telemetry: TelemetryService = Depends(get_telemetry),
+    admin_console: AdminConsoleService = Depends(get_admin_console_service),
 ):
-    sessions = await chat_service.list_sessions(auth=auth, limit=50)
-    accounts = await pool.list_account_summaries(force_refresh=True)
-    telemetry.update_runtime(
-        ready_accounts=pool.ready_account_count,
-        total_accounts=pool.inventory_count,
-        sessions=len(sessions),
-        messages=await chat_service.repository.count_messages(),
-        batches=await chat_service.repository.count_batches(),
-        assets=await chat_service.repository.count_assets(),
-    )
-    telemetry.update_account_pool(accounts)
-    telemetry.update_asset_runtime(await chat_service.repository.count_assets_by_status())
-    recent_assets = await chat_service.repository.list_recent_assets(limit=20)
-    return {
-        "accounts": accounts,
-        "sessions": sessions,
-        "assets": [
-            {
-                "asset_id": asset.id,
-                "owner_subject": asset.owner_subject,
-                "filename": asset.filename,
-                "mime_type": asset.mime_type,
-                "size_bytes": asset.size_bytes,
-                "status": asset.status,
-                "created_at": asset.created_at.isoformat() if asset.created_at else None,
-                "expires_at": asset.expires_at.isoformat() if asset.expires_at else None,
-            }
-            for asset in recent_assets
-        ],
-        "telemetry": {
-            "total_requests": telemetry.total_requests,
-            "total_errors": telemetry.total_errors,
-            "active_requests": telemetry.active_requests,
-            "account_ready": telemetry.account_ready,
-            "account_total": telemetry.account_total,
-            "chat_sessions": telemetry.chat_sessions,
-            "chat_messages": telemetry.chat_messages,
-            "chat_batches": telemetry.chat_batches,
-            "chat_assets": telemetry.chat_assets,
-            "batch_workers_active": telemetry.batch_workers_active,
-            "session_failovers_total": telemetry.session_failovers_total,
-            "account_state_counts": dict(telemetry.account_state_counts),
-            "account_queue_depth": dict(telemetry.account_queue_depth),
-            "account_in_flight": dict(telemetry.account_in_flight),
-            "asset_status_counts": dict(telemetry.asset_status_counts),
-            "asset_cleanup_runs_total": telemetry.asset_cleanup_runs_total,
-            "asset_expired_total": telemetry.asset_expired_total,
-            "asset_deleted_total": telemetry.asset_deleted_total,
-        },
-    }
+    dashboard = await admin_console.build_dashboard(auth)
+    return dashboard.model_dump(mode="json")
+
+
+@router.get("/ui/api/admin/dashboard")
+async def ui_admin_dashboard(
+    auth: AuthContext = Depends(require_ui_admin),
+    admin_console: AdminConsoleService = Depends(get_admin_console_service),
+):
+    dashboard = await admin_console.build_dashboard(auth)
+    return dashboard.model_dump(mode="json")
 
 
 @router.post("/ui/api/admin/accounts/{account_id}/actions/{action}")
@@ -384,6 +366,108 @@ async def ui_admin_account_action(
         action=action,
         pool=pool,
         telemetry=telemetry,
+    )
+
+
+@router.post("/ui/api/admin/accounts")
+async def ui_admin_upsert_account(
+    payload: AdminAccountUpsertRequest,
+    _: AuthContext = Depends(require_ui_admin),
+    admin_console: AdminConsoleService = Depends(get_admin_console_service),
+):
+    account = await admin_console.upsert_account(payload)
+    return account.model_dump(mode="json")
+
+
+@router.patch("/ui/api/admin/accounts/{account_id}")
+async def ui_admin_patch_account(
+    account_id: str,
+    payload: AdminAccountUpsertRequest,
+    _: AuthContext = Depends(require_ui_admin),
+    admin_console: AdminConsoleService = Depends(get_admin_console_service),
+):
+    patched = payload.model_copy(update={"account_id": account_id})
+    account = await admin_console.upsert_account(patched)
+    return account.model_dump(mode="json")
+
+
+@router.get("/ui/api/admin/reauth-jobs")
+async def ui_admin_list_reauth_jobs(
+    _: AuthContext = Depends(require_ui_admin),
+    admin_console: AdminConsoleService = Depends(get_admin_console_service),
+):
+    return {"items": [item.model_dump(mode="json") for item in admin_console.list_reauth_jobs()]}
+
+
+@router.post("/ui/api/admin/accounts/{account_id}/reauth")
+async def ui_admin_start_reauth(
+    account_id: str,
+    _: AuthContext = Depends(require_ui_admin),
+    admin_console: AdminConsoleService = Depends(get_admin_console_service),
+):
+    job = await admin_console.start_reauth_job(account_id)
+    return job.model_dump(mode="json")
+
+
+@router.post("/ui/api/admin/reauth-jobs/{job_id}/complete")
+async def ui_admin_complete_reauth(
+    job_id: str,
+    _: AuthContext = Depends(require_ui_admin),
+    admin_console: AdminConsoleService = Depends(get_admin_console_service),
+):
+    job = await admin_console.complete_reauth_job(job_id)
+    return job.model_dump(mode="json")
+
+
+@router.post("/ui/api/admin/reauth-jobs/{job_id}/cancel")
+async def ui_admin_cancel_reauth(
+    job_id: str,
+    _: AuthContext = Depends(require_ui_admin),
+    admin_console: AdminConsoleService = Depends(get_admin_console_service),
+):
+    job = await admin_console.cancel_reauth_job(job_id)
+    return job.model_dump(mode="json")
+
+
+@router.get("/ui/api/admin/sessions/{session_id}/export")
+async def ui_admin_export_session(
+    session_id: str,
+    format: str = Query("json"),
+    auth: AuthContext = Depends(require_ui_admin),
+    admin_console: AdminConsoleService = Depends(get_admin_console_service),
+):
+    filename, content, media_type = await admin_console.export_session_bytes(
+        session_id=session_id,
+        auth=auth,
+        export_format=format,
+    )
+    return Response(
+        content=content,
+        media_type=media_type,
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
+
+
+@router.get("/ui/api/admin/sessions/export")
+async def ui_admin_export_sessions(
+    format: str = Query("json"),
+    owner_subject: str | None = Query(None),
+    account_id: str | None = Query(None),
+    limit: int = Query(100, ge=1, le=500),
+    auth: AuthContext = Depends(require_ui_admin),
+    admin_console: AdminConsoleService = Depends(get_admin_console_service),
+):
+    filename, content, media_type = await admin_console.export_sessions_bytes(
+        auth=auth,
+        export_format=format,
+        owner_subject=owner_subject,
+        account_id=account_id,
+        limit=limit,
+    )
+    return Response(
+        content=content,
+        media_type=media_type,
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
     )
 
 

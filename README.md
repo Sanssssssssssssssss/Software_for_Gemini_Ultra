@@ -52,6 +52,7 @@ The internal service lives in `src/gemini_service`. The current implementation a
 - mock provider validation mode for offline end-to-end verification
 - React + TypeScript + Vite frontend for Login, Setup, Chat, and Admin, served by FastAPI after build
 - Playwright E2E coverage for login, chat streaming, admin actions, and user/admin access boundaries
+- admin control console for account inventory, browser-based reauthentication jobs, and session export
 
 Recommended first-run flow:
 
@@ -103,6 +104,11 @@ Useful endpoints:
 UI authentication uses admin credentials from `GEMINI_SERVICE_UI_USERNAME` / `GEMINI_SERVICE_UI_PASSWORD` and can optionally enable a standard user login with `GEMINI_SERVICE_UI_USER_USERNAME` / `GEMINI_SERVICE_UI_USER_PASSWORD`.
 API authentication uses `GEMINI_SERVICE_API_TOKENS`. Plain tokens remain backward compatible and are treated as admin tokens. Structured tokens use `subject|token|role`, for example `alice|token-1|user,bob|token-2|admin`.
 The current chat UI defaults standard users to automatic routing. Manual account pinning is only exposed to administrators for debugging and recovery work.
+The admin console now also supports:
+- adding or updating account inventory entries
+- launching a local browser reauthentication job for `reauth_required` accounts
+- completing cookie sync from that browser back into `config/accounts.json`
+- exporting individual sessions or bulk session sets as JSON or Markdown
 For offline validation without real Gemini cookies, use [config/accounts.mock.json](config/accounts.mock.json) together with `python scripts/validate_service.py`.
 For interactive cookie bootstrap without closing your main browser session, use `python scripts/playwright_bootstrap.py` to open a dedicated persistent browser profile and export fresh Gemini cookies into `config/accounts.json`.
 If you bind an account to a persistent browser profile with `cookie_source_browser` and `cookie_source_profile_dir`, local startup can now auto-refresh Gemini cookies before the service boots. Enable it with `GEMINI_SERVICE_COOKIE_AUTOSYNC_ENABLED=true`, then keep using `python scripts/run_local.py --env-file .env`.

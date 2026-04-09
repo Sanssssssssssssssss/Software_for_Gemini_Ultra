@@ -6,6 +6,11 @@
 - `GET /readyz`: readiness based on auth config, account inventory, and ready account count
 - `GET /metrics`: request and runtime metrics
 - `/admin`: account pool and recent session visibility
+- `/ui/api/admin/dashboard`: admin control console data for account inventory, reauth jobs, sessions, and assets
+- `/ui/api/admin/accounts`: add or update managed account inventory entries
+- `/ui/api/admin/accounts/{account_id}/reauth`: launch a local browser reauthentication job
+- `/ui/api/admin/reauth-jobs/{job_id}/complete`: sync cookies back from the browser job
+- `/ui/api/admin/sessions/{session_id}/export`: export a single session as JSON or Markdown
 - `POST /v1/admin/accounts/{account_id}/actions/{action}`: admin-only runtime actions
 - `POST /v1/batches`: persisted background batch execution
 - `POST /v1/uploads`: controlled asset ingest for multimodal requests
@@ -55,6 +60,11 @@ Actions:
 2. Update `config/accounts.json` with fresh `__Secure-1PSID` and `__Secure-1PSIDTS`.
 3. Use the admin page or admin API action to refresh the runtime after the new cookies are in place.
 4. Confirm `/v1/accounts` and `/admin` show the account as `ready` or `degraded`, then run a smoke test.
+5. If you are operating locally, prefer the Admin console's "一键重登" flow:
+   - click "一键重登" on the affected account
+   - finish the Google / Gemini login in the browser that opens on the service machine
+   - return to the job list and click "完成同步"
+   - confirm the account runtime returns to `ready`
 
 ## Incident: startup warns about browser autosync
 
